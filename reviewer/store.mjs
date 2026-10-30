@@ -20,6 +20,14 @@ export async function initStore() {
   }
 }
 
+/** 关闭连接池：一次性命令（--once/--flush）结束后必须调用，否则 Node 进程不退出 */
+export async function closeStore() {
+  if (pool) {
+    await pool.end()
+    pool = null
+  }
+}
+
 export function storeMode() {
   return pool ? 'pg' : 'spool'
 }

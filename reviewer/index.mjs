@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { config } from './config.mjs'
 import { listOpenPRs } from './github.mjs'
 import { reviewPR, MARKER, REVIEWER_VERSION } from './review.mjs'
-import { initStore, storeMode, flushSpool } from './store.mjs'
+import { initStore, storeMode, flushSpool, closeStore } from './store.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -66,8 +66,14 @@ if (config.once || config.onlyPr || config.dryRun) {
   } else {
     await runOnce()
   }
+  await closeStore() // 一次性模式：收尾，保证进程能退出
 } else {
   const mode = await initStore()
+  // 启动时先消化积压的 spool（轮询进程常驻，不需要 closeStore）
+  if (mode === 'pg') {
+    const n = await flushSpool()
+    if (n > 0) console.log(`[cr-m2] 启动 flush: ${n} 条积压记录入 PG`)
+  }
   console.log(`[cr-m2] 轮询模式，每 ${config.pollMinutes} 分钟一次 · reviewer=${REVIEWER_VERSION} store=${mode}`)
   setInterval(() => { runOnce().catch((e) => console.error(e.message)) }, config.pollMinutes * 60_000)
   await runOnce()

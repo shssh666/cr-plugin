@@ -37,11 +37,6 @@ export function fingerprint(f) {
   return createHash('sha1').update(`${f.path}|${f.category}|${f.title}`).digest('hex').slice(0, 12)
 }
 
-function loadRepoContext() {
-  // CLAUDE.md / REVIEW.md 随仓走——审查必须读它们（M0 的落地点）
-  return { claude: '', review: '' } // v0 由调用方注入文件内容
-}
-
 export async function reviewPR(number, state, ctxFiles) {
   const pr = await getPR(number)
   const head = pr.head.sha
