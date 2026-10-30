@@ -1,0 +1,5 @@
+# DSH bundle layer: mount the skill provider that ships ./skills.
+# dev 版占位：仅挂 skills provider，未注册运行时工具（见 README 已知缺陷①）。
+- insert:
+    - id: cr-plugin-skills
+      name: cr-plugin
