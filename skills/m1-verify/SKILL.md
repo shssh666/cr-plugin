@@ -26,7 +26,7 @@ node <cr-plugin>/m1/verify-run.mjs
 node <cr-plugin>/m1/verify-run.mjs --cmd "npm run test:e2e" --out e2e-evidence.md
 ```
 
-> Windows PowerShell 注意：裸 `--` 可能不被传入脚本（PS 自身吞掉），显式命令请用 `--cmd "..."`（可重复）或环境变量 `VERIFY_CMDS`；POSIX 下 `-- "cmd1" "cmd2"` 亦可。
+> Windows PowerShell 注意：裸 `--` 可能不被传入脚本（PS 自身吞掉），显式命令请用 `--cmd "..."`（可重复）或环境变量 `VERIFY_CMDS`；POSIX 下 `-- "cmd1" "cmd2"` 亦可。`VERIFY_CMDS` 按 `;`/`,` 拆分多条，命令本身含分号/逗号时改用 `--cmd`（不拆分）。
 
 - 产出 `verify-evidence.md`：时间、HEAD、**工作区干净度**（脏工作区出证会被标注「证据含混」）、逐命令退出码/耗时/输出原文（折叠块，超长截断留痕）
 - 退出码：0 全绿 / 1 有失败 / 2 用法错误 —— 可进 CI 与 pre-push
@@ -72,7 +72,7 @@ node <cr-plugin>/m1/review-fresh.mjs --base main   # diff = main → 工作区�
 ### 端到端行为检查（改了什么就验什么行为）
 
 把 diff 映射成用户可见行为清单（每条：行为 → 触发路径 → 对应 e2e），逐条跑：
-discussion-room 有现成 e2e 家族（`npm run test:e2e*`）；新增行为没有对应 e2e = 缺口，要么补测试要么在 PR 里声明为什么没有。输出用 `verify run -- "npm run test:e2e:xxx" --out e2e-evidence.md` 留证。
+discussion-room 有现成 e2e 家族（`npm run test:e2e*`）；新增行为没有对应 e2e = 缺口，要么补测试要么在 PR 里声明为什么没有。输出用 `verify-run --cmd "npm run test:e2e:xxx" --out e2e-evidence.md` 留证。
 
 ## 与流水线的衔接
 
