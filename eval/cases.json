@@ -78,7 +78,7 @@
       "diff": "diffs/dr-pr9.patch",
       "base": "4afb161^",
       "head": "4afb161",
-      "context": "无限画布流水线看板（PR#9：M2 10 条 6 修 4 关，DSH 同报 1）",
+      "context": "无限画布流水线看板（PR#9：M2 10 条 6 修 4 关，DSH 同报 1）。播种覆盖说明：6 修中仅 PG#27 的逐条裁决有文档确证（双引擎同报实证），其余 5 修与 4 关的逐条 split 无留档 → 暂不入集、待 PR 线程考古（recall 分母因此偏小，非选择性省略）",
       "cases": [
         { "path": "src/server/pipeline.ts", "line": 30, "category": "api-contract", "sev": "high", "label": "tp", "origin": "m2_posted", "ref": "PG#27", "title": "migrate 只 DROP mode 约束不重建，schema 分叉", "confirmed_by": "PR#9 双引擎同报实证（免复核高优），已修" }
       ]
