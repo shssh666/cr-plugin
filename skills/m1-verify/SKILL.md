@@ -35,8 +35,8 @@ node <cr-plugin>/m1/verify-run.mjs --cmd "npm run test:e2e" --out e2e-evidence.m
 ### 2. verify shot — UI 截图留证
 
 ```bash
-# 有截图工具时（命令可插拔，自行产出 --actual 文件）
-SHOT_CMD="npx playwright screenshot <url> shot.png" node <cr-plugin>/m1/verify-shot.mjs --expected design.png --note "场景"
+# 有截图工具时（SHOT_CMD 负责产出到 --actual 指定路径；--actual 始终必填）
+SHOT_CMD="npx playwright screenshot <url> shot.png" node <cr-plugin>/m1/verify-shot.mjs --actual shot.png --expected design.png --note "场景"
 # 已有截图时
 node <cr-plugin>/m1/verify-shot.mjs --actual shot.png --expected design.png
 ```
