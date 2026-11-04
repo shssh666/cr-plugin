@@ -52,10 +52,12 @@ export async function recordRun({ repo, number, author, headSha, round, reviewer
     [pr.rows[0].id, reviewerVersion, round],
   )
   for (const f of findings) {
+    // v2：投票落选者以 dropped_by_vote 入库（枚举已预留）；storeBody 可携带 [votes k/n] 等前缀元数据
+    const status = f.status === 'dropped_by_vote' ? 'dropped_by_vote' : 'posted'
     await pool.query(
       `INSERT INTO findings(run_id, path, line, severity, status, category, m2_severity, body)
-       VALUES ($1,$2,$3,$4,'posted',$5,$6,$7)`,
-      [run.rows[0].id, f.path, f.line, SEV_MAP[f.severity] || 'nit', f.category, f.severity, `${f.title}\n${f.detail}`],
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [run.rows[0].id, f.path, f.line, SEV_MAP[f.severity] || 'nit', status, f.category, f.severity, f.storeBody || `${f.title}\n${f.detail}`],
     )
   }
   return 'pg'

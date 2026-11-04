@@ -5,7 +5,7 @@
 ## 1. 增量审查策略
 
 ```
-PR 首次审查 → 全量扫描，建立该仓"问题指纹"（fingerprint = path|category|title 哈希）
+PR 首次审查 → 全量扫描，建立该仓"问题指纹"（fingerprint = path|category 哈希，v2）
      ↓
 后续轮次 → 只看新 diff + 例外扩大：
   • 修改已知高危文件（上传/房间/入口）→ 扩大到该文件全文
@@ -15,7 +15,7 @@ PR 首次审查 → 全量扫描，建立该仓"问题指纹"（fingerprint = pa
 每种问题类型独立计数 → 同类 3 次 → 沉淀为 lint 规则 / REVIEW.md 条目 / eval case
 ```
 
-已知缺陷：fingerprint 含 title，改措辞的重复意见会漏判重（v2 改 path|category）。
+v2 已改：fingerprint = path|category（2026-11-04，与 C2a 投票过滤一并落地：同 prompt 3 票独立采样、≥2 票存活、外部引擎同 path 加权 1 票存活；落选 status=dropped_by_vote 入库供 M4）。
 
 ## 2. 问题类型图谱（8 类，按自动化难度）
 

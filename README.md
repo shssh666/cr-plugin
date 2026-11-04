@@ -1,7 +1,7 @@
 # cr-plugin · 代码审查流水线插件（开发版）
 
 > **星曙铸能工作室 · 审核部分**。双引擎 PR 审查流水线：cr-m2 自研审查引擎 + 流程固化 skills + 服务器部署菜谱。
-> 状态：**v0.2-dev（开发版）**——工作流已在试点仓 9 个 PR 上实战闭环，但插件化封装未完成（见"已知缺陷"）。先上 GitHub 备份固化，边用边补。
+> 状态：**v0.3-dev（开发版）**——工作流已在试点仓 9 个 PR 上实战闭环；v2 落地 C2a 投票过滤；插件化封装未完成（见"已知缺陷"）。
 
 ## 这是什么
 
@@ -46,8 +46,8 @@ dev 版仅保证 skills 内容与引擎可独立运行；bundle 挂载未经安�
 ## 已知缺陷（诚实清单）
 
 1. **插件安装未实测**：cordis.patch.yml 按 brooks-lint 惯例写，未经 `dsh plugin add` 真装验证
-2. **M2 无投票过滤**：单 agent 输出即 findings，精度约 40%（PR#5 校准），假阳靠人工裁决兜底 → v2 路线（C2a 交叉验证）
-3. **fingerprint 含 title**：改措辞的重复意见会漏判重（v2 改 path|category）
+2. ~~**M2 无投票过滤**~~ ✅ v2 已落（C2a，2026-11-04）：3 票独立采样按 path|category 计票 ≥2 存活 + 双引擎同报加权；落选入库 `dropped_by_vote`
+3. ~~**fingerprint 含 title**~~ ✅ v2 已改 `path|category`（哈希前缀隔离旧状态）
 4. **无 eval 集**：35 条已裁决 findings 已备种子，跑分框架未建（M4）
 5. **lib/ 为占位 stub**：未注册任何 DSH 运行时工具；M1 验证工具箱（verify run/shot）未接入
 

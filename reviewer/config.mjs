@@ -18,6 +18,9 @@ export const config = {
   stateFile: process.env.CR_STATE || path.join(homedir(), '.cr-m2-state.json'),
   maxRounds: Number(process.env.CR_MAX_ROUNDS || 3),
   maxDiffChars: Number(process.env.CR_MAX_DIFF || 60000),
+  // v2 投票过滤（C2a）：CR_VOTES=3 独立采样，≥CR_VOTE_MIN 票存活；CR_VOTES=1 退回 v1 行为
+  votes: Number(process.env.CR_VOTES || 3),
+  voteMin: Number(process.env.CR_VOTE_MIN || 2),
   pollMinutes: Number(process.env.CR_POLL_MIN || 10),
   dryRun: process.argv.includes('--dry-run'),
   noPost: process.argv.includes('--no-post'),

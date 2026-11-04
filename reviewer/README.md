@@ -72,10 +72,18 @@ node index.mjs
 - 新参数：`--no-post`（跑 LLM+落库但不发评论）、`--flush`（spool 入 PG）
 - hermes PG 迁移已执行：findings +category/+m2_severity；review_runs.mode 放开 'm2'
 
-## v1 待做
+## v2 已落地（2026-11-04 · C2a 投票过滤）
 
-- inline comments（review comments API + position 映射）
-- findings 写入 PG（findings 表 + reviewer_version）
-- 部署 hermes（systemd timer 或 docker）
-- 多 agent 投票过滤（C2a）
-- 噪声度量回路（M4）
+- **多票采样 + 投票过滤**：同一 prompt 独立采样 `CR_VOTES` 票（默认 3，温度 0.2/0.5/0.8 分层），按 v2 指纹分组计票，≥`CR_VOTE_MIN` 票（默认 2）存活；`CR_VOTES=1` 退回 v1 行为
+- **双引擎加权**：本 PR 已有外部引擎 review（排除 cr-m2 自身，防自举）提及同 path → 1 票即存活（依据：双引擎同报=免复核高优，PR#9 migrate 约束条实证）
+- **fingerprint v2 = path|category**：v1 含 title，改措辞的重复意见漏判重；哈希前缀 v2 与旧状态指纹天然隔离（v2 生命周期重新计数）
+- **落选者入库**：status=`dropped_by_vote`（PG 枚举预留即用，零迁移），body 前缀 `[votes k/n]`，M4 噪声度量种子
+- REVIEWER_VERSION 哈希新增 engine 字段（`v2-vote`），引擎行为变更可回溯
+- 成本注意：`CR_VOTES=3` 即每轮 3× LLM 调用；审查模型与成本上限待定（计划表遗留），部署侧 env 可调
+
+权重依据（9 PR / 35 findings 复盘）：M2 单引擎精度 ~40%（PR#5 3 真/3 假阳/5 弱；PR#7 3 真/2 假阳），假阳多为单人采样的措辞级推测——多数票恰好压制这一层；而召回优势（PR#4 抓 DSH 漏报的 security/input high）经双引擎加权保底。
+
+## 待做
+
+- 噪声度量回路（M4）：dropped_by_vote × 人工结案四分类 联表跑分
+- eval 集搭建（35 条已裁决 findings 种子）
