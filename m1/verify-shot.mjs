@@ -2,39 +2,53 @@
 // M1 verify shot — UI 截图留证（对比留证；v1 不做像素 diff，视觉判断交给人或 VL subagent）
 //
 // 用法：
-//   SHOT_CMD="npx playwright screenshot http://localhost:3000 shot.png" node m1/verify-shot.mjs --expected design.png
+//   # SHOT_CMD 负责把截图产出到 --actual 指定的路径（--actual 始终必填）
+//   SHOT_CMD="npx playwright screenshot http://localhost:3000 shot.png" node m1/verify-shot.mjs --actual shot.png --expected design.png
+//   # 已有截图时
 //   node m1/verify-shot.mjs --actual shot.png --expected design.png --note "登录页 v2"
 // 选项：
-//   --actual <file>    实拍截图（SHOT_CMD 未设置时必填）
+//   --actual <file>    实拍截图（必填；设 SHOT_CMD 时由其产出到此路径）
 //   --expected <file>  设计稿/对照图（可选：无对照时留证单图）
 //   --note <text>      场景说明（写进证据）
-//   --out <file>       证据文件（默认 shot-evidence.md，写到 --cwd）
+//   --out <file>       证据文件（相对路径按 --cwd 解析；默认 <cwd>/shot-evidence.md）
 //   --cwd <dir>        基准目录，图片相对路径以此为根（默认当前目录）
 // 环境变量：
-//   SHOT_CMD           可插拔截图命令（在 --cwd 下以 shell 执行；命令自己负责产出 --actual 文件）
-// 退出码：0 留证成功；1 失败（截图命令失败/文件不存在）；2 使用错误
+//   SHOT_CMD           可插拔截图命令（在 --cwd 下以 shell 执行；须自行产出 --actual 文件）
+// 退出码：0 留证成功；1 失败（截图命令失败/文件不存在）；2 使用错误（缺 --actual）
 // 零依赖：node >=18
 
 import { spawnSync } from 'node:child_process'
 import { writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 
+function fail(msg) {
+  console.error(`[shot] ${msg}`)
+  process.exit(2)
+}
+
 function parseArgs(argv) {
   const opt = { actual: null, expected: null, note: '', out: null, cwd: process.cwd() }
+  const val = (name, i) => {
+    if (i + 1 >= argv.length) fail(`${name} 需要一个参数值`)
+    return argv[i + 1]
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--actual') opt.actual = argv[++i]
-    else if (a === '--expected') opt.expected = argv[++i]
-    else if (a === '--note') opt.note = argv[++i]
-    else if (a === '--out') opt.out = argv[++i]
-    else if (a === '--cwd') opt.cwd = argv[++i]
-    else { console.error(`[shot] 未知参数: ${a}`); process.exit(2) }
+    if (a === '--actual') { opt.actual = val(a, i); i++ }
+    else if (a === '--expected') { opt.expected = val(a, i); i++ }
+    else if (a === '--note') { opt.note = val(a, i); i++ }
+    else if (a === '--out') { opt.out = val(a, i); i++ }
+    else if (a === '--cwd') { opt.cwd = val(a, i); i++ }
+    else fail(`未知参数: ${a}`)
   }
   return opt
 }
 
 function main() {
   const opt = parseArgs(process.argv.slice(2))
+
+  // 先校验 --actual（始终必填）：避免 SHOT_CMD 白跑一趟昂贵截图后才因缺参数 exit 2
+  if (!opt.actual) fail('缺 --actual（必填；若用 SHOT_CMD，请让其截图输出到 --actual 指定的路径）')
 
   if (process.env.SHOT_CMD) {
     console.log(`[shot] 执行捕获: ${process.env.SHOT_CMD}`)
@@ -46,13 +60,10 @@ function main() {
       process.exit(1)
     }
   }
-  if (!opt.actual) {
-    console.error('[shot] 缺 --actual（或设 SHOT_CMD 由其产出）')
-    process.exit(2)
-  }
+
   const actualPath = path.resolve(opt.cwd, opt.actual)
   if (!existsSync(actualPath)) {
-    console.error(`[shot] 实拍不存在: ${actualPath}`)
+    console.error(`[shot] 实拍不存在: ${actualPath}${process.env.SHOT_CMD ? '（SHOT_CMD 是否产出到了 --actual 指定的路径？）' : ''}`)
     process.exit(1)
   }
   let expectedRel = null
@@ -65,15 +76,15 @@ function main() {
     expectedRel = opt.expected
   }
 
-  const outPath = opt.out ? path.resolve(opt.out) : path.join(opt.cwd, 'shot-evidence.md')
+  const outPath = opt.out ? path.resolve(opt.cwd, opt.out) : path.join(opt.cwd, 'shot-evidence.md')
   // md 引用相对 out 文件目录计算，保证在 GitHub/本地都能渲染
   const relTo = (p) => path.relative(path.dirname(outPath), path.resolve(opt.cwd, p)).replace(/\\/g, '/')
   const lines = []
-  lines.push('# UI 截图证据（m1-verify-shot/1.0）')
+  lines.push('# UI 截图证据（m1-verify-shot/1.1）')
   lines.push('')
   lines.push(`- 时间：${new Date().toISOString()}`)
   if (opt.note) lines.push(`- 场景：${opt.note}`)
-  lines.push(`- 实拍：\`${opt.actual}\`（HEAD 时点产出）`)
+  lines.push(`- 实拍：\`${opt.actual}\``)
   if (expectedRel) lines.push(`- 对照：\`${expectedRel}\``)
   lines.push('')
   lines.push('## 截图')
