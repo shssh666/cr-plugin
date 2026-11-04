@@ -4,7 +4,7 @@ import { getDiff, getPR, listReviews, postReview, postReviewWithComments } from 
 import { chat, extractFindings } from './llm.mjs'
 import { recordRun } from './store.mjs'
 
-export const MARKER = '<!-- cr-m2:v1 -->'
+export const MARKER = '<!-- cr-m2:v2 -->'
 
 const CATEGORIES = [
   'build/module-graph',   // 构建/模块图断裂
@@ -27,14 +27,96 @@ const SYSTEM_PROMPT = `你是资深代码审查者。只报高置信度问题；
 3. 报"清理路径缺失"前先检查 try/finally 是否已覆盖
 4. "缺少的代码"类问题（如某 signal 无触发者）要全文件 grep 确认后再报`
 
-/** reviewer_version：prompt+分类+模型 的哈希，任何改动都可回溯（M4 跑分用） */
+// v2：引擎行为标识入哈希——投票过滤任何改动都可经 REVIEWER_VERSION 回溯（M4 跑分键）
+const ENGINE = 'v2-vote'
+
+/** reviewer_version：engine+prompt+分类+模型 的哈希，任何改动都可回溯（M4 跑分用） */
 export const REVIEWER_VERSION = createHash('sha1')
-  .update(SYSTEM_PROMPT + '|' + CATEGORIES.join(',') + '|' + config.model)
+  .update([ENGINE, SYSTEM_PROMPT, CATEGORIES.join(','), config.model].join('|'))
   .digest('hex')
   .slice(0, 12)
 
+/**
+ * v2 指纹：path|category。
+ * v1 含 title，改措辞的重复意见会漏判重（README 缺陷③、HANDOFF §6 定论）。
+ * 前缀 v2 使其与 v1 状态文件里的旧指纹天然不碰撞（语义：v2 生命周期重新计数）。
+ */
 export function fingerprint(f) {
-  return createHash('sha1').update(`${f.path}|${f.category}|${f.title}`).digest('hex').slice(0, 12)
+  return createHash('sha1').update(['v2', f.path, f.category].join('|')).digest('hex').slice(0, 12)
+}
+
+/** 投票采样温度：低/中/高三档独立采样（自一致性投票） */
+const VOTE_TEMPERATURES = [0.2, 0.5, 0.8]
+
+function normalizeFindings(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((f) => f && typeof f.path === 'string' && typeof f.title === 'string')
+    .map((f) => ({
+      path: f.path,
+      line: Number.isInteger(f.line) ? f.line : null,
+      severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'low',
+      category: CATEGORIES.includes(f.category) ? f.category : 'api-contract',
+      title: String(f.title).slice(0, 120),
+      detail: String(f.detail || '').slice(0, 1500),
+    }))
+}
+
+/**
+ * C2a 投票过滤（v2 核心）：
+ *  - 同一 prompt 独立采样 CR_VOTES 票（温度分层），按指纹（path|category）分组计票
+ *  - ≥CR_VOTE_MIN 票存活；单票模式（CR_VOTES=1）退回 v1 行为（全存活）
+ *  - 双引擎加权：外部引擎（非 cr-m2 的 review）已提及同 path → 1 票即存活
+ *    （依据：双引擎同报=免复核高优，PR#9 migrate 约束条实证；权重来自 9 PR/35 findings 复盘）
+ *  - 落选者带 status='dropped_by_vote' 落库（PG 枚举已预留），供 M4 噪声度量
+ *    （M2 单引擎精度 ~40%：PR#5 3 真/3 假阳/5 弱、PR#7 3 真/2 假阳——多数票压制单人采样的措辞性假阳）
+ */
+async function voteFilter(prompt, pr) {
+  const nVotes = Math.max(1, config.votes)
+  const voteMin = nVotes === 1 ? 1 : Math.max(1, config.voteMin)
+
+  const ballots = []
+  for (let i = 0; i < nVotes; i++) {
+    const raw = await chat(prompt, { temperature: VOTE_TEMPERATURES[i % VOTE_TEMPERATURES.length] })
+    ballots.push(normalizeFindings(extractFindings(raw)))
+  }
+
+  // 外部引擎信号：本 PR 已有 review 里排除 cr-m2 自己（防自举：上轮报过的 path 不该给自己加权）
+  let foreignText = ''
+  try {
+    const reviews = await listReviews(pr.number)
+    foreignText = reviews
+      .filter((r) => !(r.body || '').includes(MARKER))
+      .map((r) => r.body || '')
+      .join('\n')
+  } catch {
+    /* 拉不到外部 review 就当无加权信号 */
+  }
+
+  const groups = new Map()
+  ballots.forEach((ballot, vi) => {
+    const seen = new Set()
+    for (const f of ballot) {
+      const fp = fingerprint(f)
+      if (seen.has(fp)) continue // 同一票内同指纹只计一票
+      seen.add(fp)
+      if (!groups.has(fp)) groups.set(fp, { votes: new Set(), examples: [] })
+      groups.get(fp).votes.add(vi)
+      groups.get(fp).examples.push(f)
+    }
+  })
+
+  const survivors = []
+  const dropped = []
+  for (const g of groups.values()) {
+    const votes = g.votes.size
+    // 代表条目取证据最完整的（detail 最长），票数与加权信息附在条目上
+    const best = g.examples.reduce((a, b) => ((b.detail || '').length > (a.detail || '').length ? b : a))
+    const boosted = votes < voteMin && foreignText.includes(best.path)
+    const item = { ...best, votes, nVotes, boosted }
+    if (votes >= voteMin || boosted) survivors.push(item)
+    else dropped.push({ ...item, status: 'dropped_by_vote' })
+  }
+  return { survivors, dropped, nVotes, voteMin }
 }
 
 export async function reviewPR(number, state, ctxFiles) {
@@ -66,32 +148,27 @@ export async function reviewPR(number, state, ctxFiles) {
   const round = st.rounds + 1
   const prompt = buildPrompt({ pr, diff, round, isFirst, st, ctxFiles, truncated })
 
-  const raw = await chat(prompt)
-  let findings = extractFindings(raw)
-    .filter((f) => f && typeof f.path === 'string' && typeof f.title === 'string')
-    .map((f) => ({
-      path: f.path,
-      line: Number.isInteger(f.line) ? f.line : null,
-      severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'low',
-      category: CATEGORIES.includes(f.category) ? f.category : 'api-contract',
-      title: String(f.title).slice(0, 120),
-      detail: String(f.detail || '').slice(0, 1500),
-    }))
+  // v2：多票采样 + 投票过滤 + 双引擎加权
+  const { survivors, dropped, nVotes, voteMin } = await voteFilter(prompt, pr)
 
-  // 收敛规则 4：不提重复意见（fingerprint 去重）
-  const before = findings.length
-  findings = findings.filter((f) => !st.fingerprints.includes(fingerprint(f)))
+  // 收敛规则 4：不提重复意见（指纹去重；v2 指纹=path|category）
+  const before = survivors.length
+  const findings = survivors.filter((f) => !st.fingerprints.includes(fingerprint(f)))
 
   // 收敛规则 3：同类问题一次全部指出（prompt 已要求；此处按 category 聚合展示）
   const byCat = {}
   for (const f of findings) (byCat[f.category] ||= []).push(f)
 
   const newFps = findings.map(fingerprint)
-  const result = { round, isFirst, findings, byCat, truncated, head, droppedDuplicates: before - findings.length }
+  const result = {
+    round, isFirst, findings, byCat, truncated, head,
+    droppedDuplicates: before - findings.length,
+    droppedByVote: dropped.length, nVotes, voteMin,
+  }
 
   if (!config.dryRun && !config.noPost) {
     const body = renderReview(result, pr)
-    // v1：inline comments 落到具体行（line 必须在 diff 内，否则 API 422 自动降级）
+    // inline comments 落到具体行（line 必须在 diff 内，否则 API 422 自动降级）
     const comments = findings
       .filter((f) => f.line)
       .slice(0, 20)
@@ -99,12 +176,13 @@ export async function reviewPR(number, state, ctxFiles) {
         path: f.path,
         line: f.line,
         side: 'RIGHT',
-        body: `${MARKER}\n${f.severity === 'high' ? '🟠' : f.severity === 'medium' ? '🟡' : ''} **${f.title}** [${f.category}]\n\n${f.detail}`,
+        body: `${MARKER}\n${f.severity === 'high' ? '🟠' : f.severity === 'medium' ? '🟡' : ''} **${f.title}** [${f.category}]（票 ${f.votes}/${f.nVotes}${f.boosted ? ' ·DSH 同报加权' : ''}）\n\n${f.detail}`,
       }))
     await postReviewWithComments(number, head, body, comments)
   }
 
   if (!config.dryRun) {
+    const storeTag = (f) => `[votes ${f.votes}/${f.nVotes}${f.boosted ? ',DSH' : ''}] `
     const mode = await recordRun({
       repo: config.repo,
       number,
@@ -112,7 +190,10 @@ export async function reviewPR(number, state, ctxFiles) {
       headSha: head,
       round,
       reviewerVersion: REVIEWER_VERSION,
-      findings,
+      findings: [
+        ...findings.map((f) => ({ ...f, status: 'posted', storeBody: storeTag(f) + f.title + '\n' + f.detail })),
+        ...dropped.map((f) => ({ ...f, storeBody: storeTag(f) + f.title + '\n' + f.detail })),
+      ],
     })
     result.storeMode = mode
   }
@@ -164,12 +245,12 @@ ${diff}
 }
 
 function renderReview(result, pr) {
-  const { findings, byCat, round, isFirst } = result
+  const { findings, byCat, round, isFirst, nVotes, voteMin } = result
   const counts = { high: 0, medium: 0, low: 0 }
   for (const f of findings) counts[f.severity]++
   const lines = [
     MARKER,
-    `## cr-m2 审查 · 第 ${round} 轮（${isFirst ? '全量' : '增量'}）`,
+    `## cr-m2 v2 审查 · 第 ${round} 轮（${isFirst ? '全量' : '增量'}）· 投票 ${nVotes} 票 ≥${voteMin} 存活`,
     '',
     `**High-confidence findings:** ${findings.length}（high ${counts.high} / medium ${counts.medium} / low ${counts.low}）`,
     '',
@@ -181,13 +262,16 @@ function renderReview(result, pr) {
       lines.push(`### ${cat}`)
       for (const f of fs) {
         const sev = f.severity === 'high' ? '🟠' : f.severity === 'medium' ? '🟡' : '⚪'
-        lines.push(`- ${sev} **${f.title}** — \`${f.path}${f.line ? ':' + f.line : ''}\` [${f.severity}]`)
+        lines.push(`- ${sev} **${f.title}** — \`${f.path}${f.line ? ':' + f.line : ''}\` [${f.severity}]（票 ${f.votes}/${f.nVotes}${f.boosted ? ' ·DSH 同报加权' : ''}）`)
         lines.push(`  ${f.detail.split('\n').join('\n  ')}`)
       }
       lines.push('')
     }
-    if (result.droppedDuplicates > 0) lines.push(`（已过滤 ${result.droppedDuplicates} 条重复意见）`)
+    if (result.droppedDuplicates > 0) lines.push(`（已过滤 ${result.droppedDuplicates} 条历史重复意见）`)
   }
-  lines.push('', `<sub>cr-m2 · head ${pr.head.sha.slice(0, 8)} · 增量审查 v0</sub>`)
+  if (result.droppedByVote > 0) {
+    lines.push('', `**已过滤低票 ${result.droppedByVote} 条**（status=dropped_by_vote 入库，供 M4 噪声度量复盘）`)
+  }
+  lines.push('', `<sub>cr-m2 v2 · head ${pr.head.sha.slice(0, 8)} · 增量审查 + 投票过滤（C2a）</sub>`)
   return lines.join('\n')
 }

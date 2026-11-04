@@ -46,7 +46,7 @@ async function runOnce() {
       if (res.skipped) {
         console.log(`  skipped: ${res.skipped}${res.note ? ' — ' + res.note : ''}`)
       } else {
-        console.log(`  round ${res.round}: ${res.findings.length} findings (${res.findings.filter((f) => f.severity === 'high').length} high)${config.dryRun ? ' [dry-run]' : ''}`)
+        console.log(`  round ${res.round}: ${res.findings.length} findings (${res.findings.filter((f) => f.severity === 'high').length} high, dropped-by-vote ${res.droppedByVote})${config.dryRun ? ' [dry-run]' : ''}`)
         for (const f of res.findings) console.log(`    - [${f.severity}] ${f.category} ${f.path}:${f.line ?? '?'} ${f.title}`)
       }
     } catch (err) {
