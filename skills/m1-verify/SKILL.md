@@ -58,24 +58,38 @@ node <cr-plugin>/m1/review-fresh.mjs --base main   # diff = main → 工作区�
 
 ### bug 猎手（对 diff 空跑一遍审查再提 PR）
 
-拿 review-fresh 的提示词包，但以**作者身份**自查：逐 hunk 问「这段在什么输入下会坏？」。重点四问（对齐 REVIEW.md 必查级）：
+拿 review-fresh 的提示词包，但以**作者身份**自查：逐 hunk 问「这段在什么输入下会坏？」。重点五问（对齐 REVIEW.md 必查级；第五问来自 2026-11-04 fresh-eyes 23 条 findings 的最大重复模式）：
 1. 并发与状态：有没有跨 await 的 check-then-act？断线/重入路径状态对吗？
 2. 文件安全：校验在**服务端**生效了吗？前端限制只算体验。
 3. 资源预算：新对象会不会无限增长？大文件路径流式了吗（服务器 1.9G）？
 4. 证据：我能不能给每个结论标 `文件:行号`？标不出 = 不确定 = 回去读代码。
+5. **失败路径可见吗**：逐个 `catch`/降级/默认值问「调用方感知得到吗」——退出码变了吗？有日志吗？**静默的成功是 bug**（来源：M1#5/M1r2#1/M4#1 三连实证）；带值参数缺值/NaN 是不是 fail-fast（exit 2）而非静默回退（M1#10/M1r2#5/M4#4）。
 产出与处置：自查 findings 修完再提 PR；修不完的写进 PR 的 Risk 段。
+
+**写工具/脚本类代码时**（本仓 m1/m4 或任何 CLI）：自查先过 cr-plugin `CLAUDE.md` 六条编码契约（退出码契约 / 失败可见性 / 参数 fail-fast / 副作用隔离 / 长跑容错 / 示例真跑）——每条都源自真实 findings，违反即审查 finding。
 
 ### diff 简化（末提交最小性从源头做起）
 
-提 PR 前对 diff 本身过一遍：删调试代码/注释掉的旧代码；能不动的文件绝不碰（diff 里每个文件都要能答出「为什么在这」）；重复逻辑可否收敛；改法是不是最小closure（不是最炫 closure）。参考先例：PR#9 末提交 6 文件 +37/-5 过裁决三要素。
+提 PR 前对 diff 本身过一遍：删调试代码/注释掉的旧代码；能不动的文件绝不碰（diff 里每个文件都要能答出「为什么在这」）；重复逻辑可否收敛；改法是不是最小closure（不是最炫 closure）；**文档/头注里的示例命令真跑过了吗**——没跑过的示例不许进 diff（来源：M1#1 verify-shot 示例照抄必然 exit 2、M2-dropped#41）。参考先例：PR#9 末提交 6 文件 +37/-5 过裁决三要素。
 
 ### 端到端行为检查（改了什么就验什么行为）
 
 把 diff 映射成用户可见行为清单（每条：行为 → 触发路径 → 对应 e2e），逐条跑：
 discussion-room 有现成 e2e 家族（`npm run test:e2e*`）；新增行为没有对应 e2e = 缺口，要么补测试要么在 PR 里声明为什么没有。输出用 `verify-run --cmd "npm run test:e2e:xxx" --out e2e-evidence.md` 留证。
 
-## 与流水线的衔接
+## 与流水线的衔接（工具组合管线，2026-11-04 起四 PR 实证）
 
-- 证据文件（verify-evidence / shot-evidence / e2e-evidence）随 PR 正文提交；M2/DSH 审查时会核对 Testing 段与证据一致性
-- review fresh 的 findings 与双引擎 findings 同等对待：**修复，或带理由关闭**
+**标准组合**（每个 PR 合并前）：
+
+```
+m1/verify-run.mjs（证据：Testing 段唯一合法来源）
+  → m1/review-fresh.mjs --base main（提示词包）
+    → 全新上下文 subagent 消费（不带作者解释）
+      → findings 回流 PR：修复，或带理由关闭
+        → （触及审查引擎/规则时）m4/eval-run.mjs 重跑对比——升留降回
+```
+
+- **三眼模型**：M2 投票引擎（压不一致噪声）+ DSH-action（异步竞态/跨文件强项）+ fresh-eyes（微妙语义 bug 召回，M2 实测对此类票池=0）——三眼互补，缺一漏一类
+- **findings 三去向闭环**：每条审出的问题 ①修代码（PR）②反哺规则（CLAUDE/REVIEW/SYSTEM_PROMPT 反例/skill 条目，同类 ≥3 次必须沉淀）③入 eval 种子（cases.json）——只修代码不复盘 = 同类问题必然重演
+- 证据文件随 PR 正文提交；review fresh 的 findings 与双引擎 findings 同等对待
 - 阶段一做扎实 → 阶段二（PR 中）轮数下降 → 北极星（≤1 人在环）才有基础

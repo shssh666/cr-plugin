@@ -25,10 +25,12 @@ const SYSTEM_PROMPT = `你是资深代码审查者。只报高置信度问题；
 1. Node 单线程事件循环内、两个 await 之间的 check-then-set 是原子的，不要报竞态
 2. 报"缺校验"前先检查上游调用链是否已校验（如 upload 已验 magic，下游无需重复）
 3. 报"清理路径缺失"前先检查 try/finally 是否已覆盖
-4. "缺少的代码"类问题（如某 signal 无触发者）要全文件 grep 确认后再报`
+4. "缺少的代码"类问题（如某 signal 无触发者）要全文件 grep 确认后再报
+5. 一次性 dev/CLI 工具里，执行操作者自己通过 env/参数显式配置的命令（如 SHOT_CMD、VERIFY_CMDS 这类）是设计意图，不是命令注入面；只有命令来源不可信（网络数据、远端用户输入拼接）时才报安全
+6. spawnSync/readFileSync 等同步阻塞在一次性 CLI 工具里是合理选择；「流式/内存预算」约束针对长驻服务端处理不可信大输入，不要套用到受控的本地 CLI 路径`
 
-// v2：引擎行为标识入哈希——投票过滤任何改动都可经 REVIEWER_VERSION 回溯（M4 跑分键）
-const ENGINE = 'v2-vote'
+// v2.1：+反例 5/6（dev-CLI 语境——M4 首跑实证：此类「假阳」拿 3/3 一致高票，属 prompt 缺口非阈值问题）
+const ENGINE = 'v2.1-vote'
 
 /** reviewer_version：engine+prompt+分类+模型 的哈希，任何改动都可回溯（M4 跑分用） */
 export const REVIEWER_VERSION = createHash('sha1')
