@@ -1,7 +1,7 @@
 # cr-plugin · 代码审查流水线插件（开发版）
 
 > **星曙铸能工作室 · 审核部分**。双引擎 PR 审查流水线：cr-m2 自研审查引擎 + 流程固化 skills + 服务器部署菜谱。
-> 状态：**v0.3-dev（开发版）**——工作流已在试点仓 9 个 PR 上实战闭环；v2 落地 C2a 投票过滤；插件化封装未完成（见"已知缺陷"）。
+> 状态：**v0.4-dev（开发版）**——工作流已在试点仓 10 个 PR 上实战闭环；v2 投票过滤（C2a）上生产；M1 验证工具箱落地；插件化封装未完成（见"已知缺陷"）。
 
 ## 这是什么
 
@@ -10,11 +10,23 @@
 ```
 cr-plugin/
 ├── skills/cr-review-pipeline/   # 工作流固化：双引擎审查全流程纪律（SKILL.md + 细则参考）
-├── reviewer/                    # cr-m2 审查引擎（Node 24，增量审查 + 收敛四规则 + PG 落库）
+├── skills/m1-verify/            # M1 验证工具箱：verify run/shot + review fresh + 三技能 playbook
+├── reviewer/                    # cr-m2 审查引擎（Node 24，增量审查 + 收敛四规则 + 投票过滤 + PG 落库）
+├── m1/                          # M1 脚本：verify-run / review-fresh / verify-shot（零依赖 node ≥18）
 ├── recipes/                     # 服务器菜谱（PG 部署 / compose+env_file 部署 / 密钥轮换）
 ├── cordis.patch.yml             # DSH bundle 挂载点（skills provider）
 └── lib/index.js                 # 运行时入口（v0 占位，未注册工具）
 ```
+
+## M1 验证工具箱（m1/ + skills/m1-verify）
+
+```bash
+node m1/verify-run.mjs                          # 自动发现 lint/typecheck/test/build → verify-evidence.md（PR Testing 唯一合法证据）
+node m1/review-fresh.mjs --base main            # 新上下文复审提示词包（交给全新 subagent，不带作者解释）
+node m1/verify-shot.mjs --actual a.png --expected b.png   # UI 截图留证（SHOT_CMD 可插拔捕获）
+```
+
+「我做完了」=「verify run 全绿的证据文件」；P1 验收标准（PR 必附 verify 证据）由此落地。
 
 ## 实战履历（试点仓 discussion-room，9 PR 全合并）
 
@@ -49,7 +61,7 @@ dev 版仅保证 skills 内容与引擎可独立运行；bundle 挂载未经安�
 2. ~~**M2 无投票过滤**~~ ✅ v2 已落（C2a，2026-11-04）：3 票独立采样按 path|category 计票 ≥2 存活 + 双引擎同报加权；落选入库 `dropped_by_vote`
 3. ~~**fingerprint 含 title**~~ ✅ v2 已改 `path|category`（哈希前缀隔离旧状态）
 4. **无 eval 集**：35 条已裁决 findings 已备种子，跑分框架未建（M4）
-5. **lib/ 为占位 stub**：未注册任何 DSH 运行时工具；M1 验证工具箱（verify run/shot）未接入
+5. **lib/ 为占位 stub**：未注册任何 DSH 运行时工具。M1 工具箱已落地为**脚本 + skill**（`m1/` + `skills/m1-verify/`，2026-11-04），运行时工具注册随缺陷①一起补
 
 ## 边界声明
 
