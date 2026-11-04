@@ -70,15 +70,39 @@ function normalizeFindings(list) {
  *  - 落选者带 status='dropped_by_vote' 落库（PG 枚举已预留），供 M4 噪声度量
  *    （M2 单引擎精度 ~40%：PR#5 3 真/3 假阳/5 弱、PR#7 3 真/2 假阳——多数票压制单人采样的措辞性假阳）
  */
-async function voteFilter(prompt, pr) {
+/** 采样 N 票（温度分层独立采样）；voteFilter 与 M4 eval 重放共用 */
+export async function collectBallots(prompt) {
   const nVotes = Math.max(1, config.votes)
-  const voteMin = nVotes === 1 ? 1 : Math.max(1, config.voteMin)
-
   const ballots = []
   for (let i = 0; i < nVotes; i++) {
     const raw = await chat(prompt, { temperature: VOTE_TEMPERATURES[i % VOTE_TEMPERATURES.length] })
     ballots.push(normalizeFindings(extractFindings(raw)))
   }
+  return ballots
+}
+
+/** 跨票按指纹（path|category）分组计票；同一票内同指纹只计一票 */
+export function tallyGroups(ballots) {
+  const groups = new Map()
+  ballots.forEach((ballot, vi) => {
+    const seen = new Set()
+    for (const f of ballot) {
+      const fp = fingerprint(f)
+      if (seen.has(fp)) continue
+      seen.add(fp)
+      if (!groups.has(fp)) groups.set(fp, { votes: new Set(), examples: [] })
+      groups.get(fp).votes.add(vi)
+      groups.get(fp).examples.push(f)
+    }
+  })
+  return groups
+}
+
+async function voteFilter(prompt, pr) {
+  const nVotes = Math.max(1, config.votes)
+  const voteMin = nVotes === 1 ? 1 : Math.max(1, config.voteMin)
+
+  const ballots = await collectBallots(prompt)
 
   // 外部引擎信号：本 PR 已有 review 里排除 cr-m2 自己（防自举：上轮报过的 path 不该给自己加权）
   let foreignText = ''
@@ -92,18 +116,7 @@ async function voteFilter(prompt, pr) {
     /* 拉不到外部 review 就当无加权信号 */
   }
 
-  const groups = new Map()
-  ballots.forEach((ballot, vi) => {
-    const seen = new Set()
-    for (const f of ballot) {
-      const fp = fingerprint(f)
-      if (seen.has(fp)) continue // 同一票内同指纹只计一票
-      seen.add(fp)
-      if (!groups.has(fp)) groups.set(fp, { votes: new Set(), examples: [] })
-      groups.get(fp).votes.add(vi)
-      groups.get(fp).examples.push(f)
-    }
-  })
+  const groups = tallyGroups(ballots)
 
   const survivors = []
   const dropped = []
@@ -207,7 +220,7 @@ export async function reviewPR(number, state, ctxFiles) {
   return result
 }
 
-function buildPrompt({ pr, diff, round, isFirst, st, ctxFiles, truncated }) {
+export function buildPrompt({ pr, diff, round, isFirst, st, ctxFiles, truncated }) {
   const known = st.fingerprints.length
     ? `已报告过的问题指纹（不要重复报告同类同位置问题）：${st.fingerprints.slice(-30).join(', ')}`
     : '（首轮，无历史）'
