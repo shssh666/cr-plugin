@@ -1,0 +1,1116 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 4153c88..5d16690 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -21,6 +21,14 @@
+ - 环境变量只经 `src/server/config.ts` 读取，禁止散落 `process.env`
+ - 服务器只有 1.9G 内存：上传/转换走流式，禁止整体读入内存
+ 
++## 流程铁律（违反即事故）
++
++- **任何改动必须走 PR + 审查 + 合并**：含 hotfix、含"很明显"的修复，无一例外
++- **禁止直推 main；禁止临时解除分支保护**。紧急修复走加急 PR（标题加 `HOTFIX:`），审查可快不可省
++- **合并冲突在特性分支解决后重新过审查**，不允许解完冲突直接合
++- 部署前四查：有 PR？有审查记录？有回滚路径（PR 里写明）？CI 绿？
++- schema 变更必须成对：回写 `deploy/pg-init.sql`（新环境基线）+ 保留增量迁移（存量自愈）
++
+ ## 目标 / 非目标
+ 
+ - 目标：4 人稳定并发、演示翻页同步、文件安全收发
+diff --git a/REVIEW.md b/REVIEW.md
+index e4ce3e4..48528c1 100644
+--- a/REVIEW.md
++++ b/REVIEW.md
+@@ -8,6 +8,7 @@
+ 2. **文件安全**：路径穿越、MIME 伪装、大小限制必须在**服务端**生效
+ 3. **资源预算**：上传/转换的内存路径是否流式（服务器 1.9G）；是否有无限增长的对象（房间列表、未清理的临时文件）
+ 4. **证据要求**：每个发现给 `文件:行号`，禁止从函数名猜行为
++5. **流程合规**：diff 若含绕过审查的痕迹（直推 main、解除分支保护、解冲突后未重审）直接报 high；schema 变更未成对回写 `deploy/pg-init.sql` 报 high
+ 
+ ## Nit 上限
+ 
+diff --git a/deploy/pg-init.sql b/deploy/pg-init.sql
+index 6de79cd..70cf456 100644
+--- a/deploy/pg-init.sql
++++ b/deploy/pg-init.sql
+@@ -28,7 +28,7 @@ CREATE TABLE review_runs (
+   id              bigserial PRIMARY KEY,
+   pr_id           bigint NOT NULL REFERENCES prs(id),
+   reviewer_version text NOT NULL,
+-  mode            text NOT NULL CHECK (mode IN ('quick','standard','deep')),
++  mode            text NOT NULL CHECK (mode IN ('quick','standard','deep','m2')),
+   round           int NOT NULL DEFAULT 1,
+   ts              timestamptz NOT NULL DEFAULT now()
+ );
+@@ -41,7 +41,9 @@ CREATE TABLE findings (
+   severity     finding_severity NOT NULL,
+   body         text NOT NULL,
+   status       finding_status NOT NULL DEFAULT 'posted',
+-  status_updated_at timestamptz
++  status_updated_at timestamptz,
++  category     text,          -- M2 八类问题分类（v1 新增）
++  m2_severity  text           -- M2 原始 high/medium/low（v1 新增）
+ );
+ 
+ CREATE TABLE approvals (
+diff --git a/package-lock.json b/package-lock.json
+index 2335e86..ac5805e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,11 +13,13 @@
+         "fastify": "^5.3.0",
+         "fastify-plugin": "^5.0.0",
+         "mermaid": "^11.4.0",
++        "pg": "^8.13.0",
+         "ws": "^8.22.0"
+       },
+       "devDependencies": {
+         "@eslint/js": "^9.20.0",
+         "@types/node": "^24.0.0",
++        "@types/pg": "^8.11.0",
+         "@types/ws": "^8.5.0",
+         "eslint": "^9.20.0",
+         "prettier": "^3.5.0",
+@@ -853,6 +855,18 @@
+         "undici-types": ">=7.24.0 <7.24.7"
+       }
+     },
++    "node_modules/@types/pg": {
++      "version": "8.23.1",
++      "resolved": "https://registry.npmjs.org/@types/pg/-/pg-8.23.1.tgz",
++      "integrity": "sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/node": "*",
++        "pg-protocol": "*",
++        "pg-types": "^2.2.0"
++      }
++    },
+     "node_modules/@types/trusted-types": {
+       "version": "2.0.7",
+       "resolved": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz",
+@@ -3122,6 +3136,95 @@
+         "url": "https://github.com/sponsors/isaacs"
+       }
+     },
++    "node_modules/pg": {
++      "version": "8.23.1",
++      "resolved": "https://registry.npmjs.org/pg/-/pg-8.23.1.tgz",
++      "integrity": "sha512-aL96AHANtWjPLDOLqnhx+ngp9+UK7ETEU8VJrDCGvsSSi/mGLcWYsS6Herg7lmaBJe4uwrfqsa7gTEFaSizDoQ==",
++      "license": "MIT",
++      "dependencies": {
++        "pg-connection-string": "^2.14.1",
++        "pg-pool": "^3.14.0",
++        "pg-protocol": "^1.16.1",
++        "pg-types": "2.2.0",
++        "pgpass": "1.0.5"
++      },
++      "engines": {
++        "node": ">= 16.0.0"
++      },
++      "optionalDependencies": {
++        "pg-cloudflare": "^1.4.1"
++      },
++      "peerDependencies": {
++        "pg-native": ">=3.0.1"
++      },
++      "peerDependenciesMeta": {
++        "pg-native": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/pg-cloudflare": {
++      "version": "1.4.1",
++      "resolved": "https://registry.npmjs.org/pg-cloudflare/-/pg-cloudflare-1.4.1.tgz",
++      "integrity": "sha512-6PQbsFWZcp9EmJEwy5cGQ2La+AMWpP46lgbb8X+U/XsHIUweYDNCpeuKck5RxL2MdVFi7krbbEi5nX4Zh7JhrQ==",
++      "license": "MIT",
++      "optional": true
++    },
++    "node_modules/pg-connection-string": {
++      "version": "2.14.1",
++      "resolved": "https://registry.npmjs.org/pg-connection-string/-/pg-connection-string-2.14.1.tgz",
++      "integrity": "sha512-qR3kGNPBLpCNtz0evbKA0Y/MRFXwSSdT+pTJvYp/bXTcReZbvX1kzF0IyTc1QnxqF7AZbOeBhNL8R5mYQZV/MA==",
++      "license": "MIT"
++    },
++    "node_modules/pg-int8": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/pg-int8/-/pg-int8-1.0.1.tgz",
++      "integrity": "sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=4.0.0"
++      }
++    },
++    "node_modules/pg-pool": {
++      "version": "3.14.0",
++      "resolved": "https://registry.npmjs.org/pg-pool/-/pg-pool-3.14.0.tgz",
++      "integrity": "sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==",
++      "license": "MIT",
++      "peerDependencies": {
++        "pg": ">=8.0"
++      }
++    },
++    "node_modules/pg-protocol": {
++      "version": "1.16.1",
++      "resolved": "https://registry.npmjs.org/pg-protocol/-/pg-protocol-1.16.1.tgz",
++      "integrity": "sha512-p9VOFMiHB/ZbJATetbg+99PxssTVSQRnyuPSQ67mN1+1KBOjZaZ83ZQzltnxPhJwSsC3nwVjJ10DVJlerbFzLg==",
++      "license": "MIT"
++    },
++    "node_modules/pg-types": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/pg-types/-/pg-types-2.2.0.tgz",
++      "integrity": "sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==",
++      "license": "MIT",
++      "dependencies": {
++        "pg-int8": "1.0.1",
++        "postgres-array": "~2.0.0",
++        "postgres-bytea": "~1.0.0",
++        "postgres-date": "~1.0.4",
++        "postgres-interval": "^1.1.0"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/pgpass": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/pgpass/-/pgpass-1.0.5.tgz",
++      "integrity": "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==",
++      "license": "MIT",
++      "dependencies": {
++        "split2": "^4.1.0"
++      }
++    },
+     "node_modules/picomatch": {
+       "version": "4.0.7",
+       "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+@@ -3188,6 +3291,45 @@
+         "points-on-curve": "0.2.0"
+       }
+     },
++    "node_modules/postgres-array": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/postgres-array/-/postgres-array-2.0.0.tgz",
++      "integrity": "sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/postgres-bytea": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/postgres-bytea/-/postgres-bytea-1.0.1.tgz",
++      "integrity": "sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/postgres-date": {
++      "version": "1.0.7",
++      "resolved": "https://registry.npmjs.org/postgres-date/-/postgres-date-1.0.7.tgz",
++      "integrity": "sha512-suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/postgres-interval": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/postgres-interval/-/postgres-interval-1.2.0.tgz",
++      "integrity": "sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==",
++      "license": "MIT",
++      "dependencies": {
++        "xtend": "^4.0.0"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
+     "node_modules/prelude-ls": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz",
+@@ -3720,6 +3862,15 @@
+         }
+       }
+     },
++    "node_modules/xtend": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/xtend/-/xtend-4.0.2.tgz",
++      "integrity": "sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.4"
++      }
++    },
+     "node_modules/yocto-queue": {
+       "version": "0.1.0",
+       "resolved": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz",
+diff --git a/package.json b/package.json
+index 9f375df..7a3ff47 100644
+--- a/package.json
++++ b/package.json
+@@ -16,6 +16,7 @@
+     "test:e2e:convert": "node scripts/build.mjs && CR_CONVERT_MODE=fake CR_FAKE_DELAY=500 node test/e2e-convert.test.ts",
+     "test:e2e:mermaid": "node scripts/build.mjs && node test/e2e-mermaid.test.ts",
+     "test:e2e:room": "node scripts/build.mjs && node test/e2e-room.test.ts",
++    "test:e2e:pipeline": "node scripts/build.mjs && node test/e2e-pipeline.test.ts",
+     "build": "node scripts/build.mjs",
+     "start": "node dist/server/index.js"
+   },
+@@ -25,11 +26,13 @@
+     "fastify": "^5.3.0",
+     "fastify-plugin": "^5.0.0",
+     "mermaid": "^11.4.0",
++    "pg": "^8.13.0",
+     "ws": "^8.22.0"
+   },
+   "devDependencies": {
+     "@eslint/js": "^9.20.0",
+     "@types/node": "^24.0.0",
++    "@types/pg": "^8.11.0",
+     "@types/ws": "^8.5.0",
+     "eslint": "^9.20.0",
+     "prettier": "^3.5.0",
+diff --git a/public/canvas.css b/public/canvas.css
+new file mode 100644
+index 0000000..0d3db7d
+--- /dev/null
++++ b/public/canvas.css
+@@ -0,0 +1,129 @@
++#hud {
++  position: fixed;
++  top: 0;
++  left: 0;
++  right: 0;
++  z-index: 10;
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 10px 16px;
++  background: #1f2937;
++  color: #fff;
++  font-family: system-ui, sans-serif;
++  font-size: 13px;
++}
++
++.hud-chip {
++  background: #374151;
++  padding: 2px 10px;
++  border-radius: 999px;
++  font-size: 11px;
++}
++
++.hud-hint {
++  color: #9ca3af;
++  font-size: 11px;
++}
++
++.hud-link {
++  margin-left: auto;
++  color: #93c5fd;
++  text-decoration: none;
++}
++
++#viewport {
++  position: fixed;
++  inset: 0;
++  overflow: hidden;
++  background: #111827;
++  cursor: grab;
++}
++
++#viewport.panning {
++  cursor: grabbing;
++}
++
++#world {
++  position: absolute;
++  top: 0;
++  left: 0;
++  width: 0;
++  height: 0;
++  transform-origin: 0 0;
++}
++
++#edges {
++  position: absolute;
++  top: 0;
++  left: 0;
++  overflow: visible;
++  pointer-events: none;
++}
++
++.node {
++  position: absolute;
++  min-width: 150px;
++  max-width: 220px;
++  padding: 10px 12px;
++  border-radius: 10px;
++  background: #1f2937;
++  border: 1px solid #374151;
++  color: #e5e7eb;
++  font-family: system-ui, sans-serif;
++  font-size: 12px;
++  cursor: grab;
++  user-select: none;
++  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
++}
++
++.node:active {
++  cursor: grabbing;
++}
++
++.node .n-title {
++  font-weight: 600;
++  margin-bottom: 4px;
++  display: flex;
++  align-items: center;
++  gap: 6px;
++}
++
++.node .n-dot {
++  width: 8px;
++  height: 8px;
++  border-radius: 50%;
++  flex: none;
++}
++
++.node .n-sub {
++  color: #9ca3af;
++  font-size: 11px;
++  line-height: 1.4;
++}
++
++.node.kind-stage {
++  border-color: #4b5563;
++  background: #111827;
++}
++
++.node.kind-pr {
++  background: #1e293b;
++}
++
++.node.kind-cat {
++  background: #292524;
++}
++
++.node.kind-engine {
++  background: #172554;
++  border-color: #1e40af;
++}
++
++.dot-ok { background: #22c55e; }
++.dot-warn { background: #f59e0b; }
++.dot-fail { background: #ef4444; }
++.dot-idle { background: #6b7280; }
++.dot-high { background: #ef4444; }
++.dot-med { background: #f59e0b; }
++.dot-low { background: #9ca3af; }
+diff --git a/public/canvas.html b/public/canvas.html
+new file mode 100644
+index 0000000..6cb0884
+--- /dev/null
++++ b/public/canvas.html
+@@ -0,0 +1,23 @@
++<!doctype html>
++<html lang="zh-CN">
++  <head>
++    <meta charset="utf-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <title>流水线看板 · 无限画布</title>
++    <link rel="stylesheet" href="/canvas.css" />
++  </head>
++  <body>
++    <div id="hud">
++      <span id="hud-title">流水线看板</span>
++      <span id="hud-store" class="hud-chip"></span>
++      <span class="hud-hint">滚轮缩放 · 拖背景平移 · 拖节点布局</span>
++      <a href="/" class="hud-link">← 回讨论室</a>
++    </div>
++    <div id="viewport">
++      <div id="world">
++        <svg id="edges"></svg>
++      </div>
++    </div>
++    <script type="module" src="/js/canvas.js"></script>
++  </body>
++</html>
+diff --git a/src/server/app.ts b/src/server/app.ts
+index b787a43..b7afed4 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws'
+ import { RoomRegistry } from './room.ts'
+ import uploadPlugin from './upload.ts'
+ import convertPlugin from './convert.ts'
++import pipelinePlugin from './pipeline.ts'
+ import { MsgType, sanitizeRoomId, type WsMessage } from '../shared/protocol.ts'
+ 
+ export interface AppOptions {
+@@ -47,6 +48,8 @@ export function buildApp(opts: AppOptions) {
+   app.register(uploadPlugin)
+   // PPT 转换（即起即灭容器，并发=1，120s 超时）
+   app.register(convertPlugin)
++  // 流水线状态 JSON（M5 看板数据层 + AI 可读）
++  app.register(pipelinePlugin)
+ 
+   app.get('/healthz', async () => ({ ok: true, ts: Date.now() }))
+ 
+@@ -67,6 +70,13 @@ export function buildApp(opts: AppOptions) {
+       const name = url.searchParams.get('name')?.trim() || `user-${Math.random().toString(36).slice(2, 6)}`
+       const roomId = sanitizeRoomId(url.searchParams.get('room'))
+       const room = registry.getOrCreate(roomId)
++      if (!room) {
++        const msg: WsMessage = { type: MsgType.system, payload: { reason: 'too many rooms' }, ts: Date.now() }
++        ws.send(JSON.stringify(msg))
++        // 用 close code 4001 传达拒绝（send 可能因立即 close 丢失，code 更可靠）
++        ws.close(4001, 'too many rooms')
++        return
++      }
+       let clientId: string | null = null
+ 
+       room
+diff --git a/src/server/config.ts b/src/server/config.ts
+index 50ed350..50d6c25 100644
+--- a/src/server/config.ts
++++ b/src/server/config.ts
+@@ -8,4 +8,5 @@ function readInt(name: string, fallback: number): number {
+ export const config = {
+   port: readInt('PORT', 3000),
+   host: process.env['HOST'] ?? '127.0.0.1',
++  pgDsn: process.env['PG_DSN'] ?? '',
+ }
+diff --git a/src/server/pipeline.ts b/src/server/pipeline.ts
+new file mode 100644
+index 0000000..4353110
+--- /dev/null
++++ b/src/server/pipeline.ts
+@@ -0,0 +1,178 @@
++import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
++import fp from 'fastify-plugin'
++import { config } from './config.ts'
++
++/**
++ * /api/pipeline：流水线状态的结构化 JSON（M5 度量看板的数据层）。
++ * 同一份数据既喂无限画布前端，也供 AI 审查者机器读取（"AI 查看更直观"）。
++ * 无 PG_DSN 或连接失败时优雅降级为空态，不阻塞应用。
++ */
++
++interface PipelineJSON {
++  generatedAt: string
++  store: 'pg' | 'degraded'
++  stages: Array<{ id: string; name: string; status: 'ok' | 'warn' | 'fail' | 'idle'; note: string }>
++  engines: Array<{ id: string; name: string; status: string; runs: number; lastRun: string | null; reviewerVersion: string | null }>
++  prs: Array<{
++    number: number
++    merged: boolean
++    reverted: boolean
++    rounds: number
++    findings: number
++    high: number
++    medium: number
++    low: number
++  }>
++  findingsByCategory: Array<{ category: string; total: number; fixed: number; high: number }>
++  guardrails: { revertRate: number | null; incidentRate: number | null }
++}
++
++/** 存量库自愈迁移（幂等）：补齐 M2 列；mode 约束 DROP 后必须 ADD 回扩展版，防新库/存量库 schema 分叉 */
++async function migrate(p: import('pg').Pool): Promise<void> {
++  await p.query(`ALTER TABLE findings ADD COLUMN IF NOT EXISTS category text`)
++  await p.query(`ALTER TABLE findings ADD COLUMN IF NOT EXISTS m2_severity text`)
++  await p.query(`ALTER TABLE review_runs DROP CONSTRAINT IF EXISTS review_runs_mode_check`)
++  await p.query(`ALTER TABLE review_runs ADD CONSTRAINT review_runs_mode_check CHECK (mode IN ('quick','standard','deep','m2'))`)
++}
++
++const EMPTY: PipelineJSON = {
++  generatedAt: '',
++  store: 'degraded',
++  stages: [
++    { id: 'pre', name: 'PR 前', status: 'idle', note: 'M1 验证工具箱未部署' },
++    { id: 'during', name: 'PR 中', status: 'idle', note: '审查引擎状态未知' },
++    { id: 'merge', name: '合并时', status: 'idle', note: '门禁状态未知' },
++    { id: 'post', name: '合并后', status: 'idle', note: '回滚监控未接入' },
++  ],
++  engines: [],
++  prs: [],
++  findingsByCategory: [],
++  guardrails: { revertRate: null, incidentRate: null },
++}
++
++async function pipelinePlugin(app: FastifyInstance): Promise<void> {
++  let pool: import('pg').Pool | null = null
++  let poolInit: Promise<import('pg').Pool | null> | null = null // 单飞：并发请求共用一次初始化
++  let lastFail = 0
++  const RETRY_COOLDOWN = 30_000 // PG 短暂不可用时 30s 内不重试，避免每请求新建池
++
++  async function getPool() {
++    if (pool) return pool
++    if (Date.now() - lastFail < RETRY_COOLDOWN) return null
++    if (!poolInit) {
++      poolInit = (async () => {
++        const dsn = config.pgDsn
++        if (!dsn) return null
++        let p: import('pg').Pool | null = null
++        try {
++          const pg = (await import('pg')).default
++          p = new pg.Pool({ connectionString: dsn, connectionTimeoutMillis: 2000, max: 2 })
++          p.on('error', (err: Error) => {
++            // idle 连接报错必须有监听，否则 Node 以 uncaughtException 崩进程
++            console.error('[pg] pool error:', err.message)
++          })
++          await p.query('select 1')
++          await migrate(p) // 存量库自愈：补齐 M2 列与 mode 约束
++          pool = p
++          return p
++        } catch {
++          if (p) await p.end().catch(() => {}) // 失败的池要 end，防连接泄漏
++          pool = null
++          lastFail = Date.now()
++          return null
++        } finally {
++          poolInit = null
++        }
++      })()
++    }
++    return poolInit
++  }
++
++  app.get('/api/pipeline', async (_req: FastifyRequest, reply: FastifyReply) => {
++    const p = await getPool()
++    if (!p) {
++      return reply.send({ ...EMPTY, generatedAt: new Date().toISOString() })
++    }
++    try {
++      const prsQ = await p.query(`
++        SELECT p.number,
++               (p.merged_at IS NOT NULL) AS merged,
++               p.reverted,
++               COALESCE(MAX(r.round), 0) AS rounds,
++               COUNT(f.id) AS findings,
++               COUNT(f.id) FILTER (WHERE f.m2_severity='high') AS high,
++               COUNT(f.id) FILTER (WHERE f.m2_severity='medium') AS medium,
++               COUNT(f.id) FILTER (WHERE f.m2_severity='low') AS low
++        FROM prs p
++        LEFT JOIN review_runs r ON r.pr_id = p.id AND r.mode = 'm2'
++        LEFT JOIN findings f ON f.run_id = r.id
++        GROUP BY p.id, p.number, p.merged_at, p.reverted
++        ORDER BY p.number`)
++      const catQ = await p.query(`
++        SELECT COALESCE(category, 'uncategorized') AS category,
++               COUNT(*) AS total,
++               COUNT(*) FILTER (WHERE status='fixed') AS fixed,
++               COUNT(*) FILTER (WHERE m2_severity='high') AS high
++        FROM findings GROUP BY COALESCE(category, 'uncategorized') ORDER BY total DESC`)
++      const engQ = await p.query(`
++        SELECT COUNT(*) AS runs, MAX(ts) AS last, COUNT(DISTINCT reviewer_version) AS versions,
++               MAX(reviewer_version) AS version
++        FROM review_runs WHERE mode='m2'`)
++
++      const prs = prsQ.rows.map((r) => ({
++        number: Number(r.number),
++        merged: Boolean(r.merged),
++        reverted: Boolean(r.reverted),
++        rounds: Number(r.rounds),
++        findings: Number(r.findings),
++        high: Number(r.high),
++        medium: Number(r.medium),
++        low: Number(r.low),
++      }))
++      const eng = engQ.rows[0]
++      const totalFindings = prs.reduce((s, x) => s + x.findings, 0)
++      const highOpen = prs.reduce((s, x) => s + x.high, 0)
++
++      const stages: PipelineJSON['stages'] = [
++        { id: 'pre', name: 'PR 前', status: 'idle', note: 'M1 验证工具箱未部署' },
++        {
++          id: 'during',
++          name: 'PR 中',
++          status: highOpen > 0 ? 'warn' : 'ok',
++          note: `M2 累计 ${totalFindings} findings（high ${highOpen}）`,
++        },
++        { id: 'merge', name: '合并时', status: 'ok', note: '分支保护：PR + CI 绿 + 禁 force push' },
++        { id: 'post', name: '合并后', status: 'idle', note: '回滚监控未接入' },
++      ]
++
++      return reply.send({
++        generatedAt: new Date().toISOString(),
++        store: 'pg',
++        stages,
++        engines: [
++          {
++            id: 'm2',
++            name: 'cr-m2（自研）',
++            status: 'running',
++            runs: Number(eng?.runs ?? 0),
++            lastRun: eng?.last ? new Date(eng.last).toISOString() : null,
++            reviewerVersion: eng?.version ?? null,
++          },
++          { id: 'dsh', name: 'DSH-action（外部）', status: 'external', runs: 0, lastRun: null, reviewerVersion: null },
++        ],
++        prs,
++        findingsByCategory: catQ.rows.map((r) => ({
++          category: r.category,
++          total: Number(r.total),
++          fixed: Number(r.fixed),
++          high: Number(r.high),
++        })),
++        guardrails: { revertRate: null, incidentRate: null },
++      } satisfies PipelineJSON)
++    } catch {
++      return reply.send({ ...EMPTY, generatedAt: new Date().toISOString(), store: 'degraded' })
++    }
++  })
++}
++
++export default fp(pipelinePlugin, { name: 'pipeline' })
+diff --git a/src/server/room.ts b/src/server/room.ts
+index 0b8190c..c48d626 100644
+--- a/src/server/room.ts
++++ b/src/server/room.ts
+@@ -145,18 +145,22 @@ export class RoomRegistry {
+   private rooms = new Map<string, Room>()
+   private gcTimers = new Map<string, ReturnType<typeof setTimeout>>()
+   readonly gcDelayMs: number
++  readonly maxRooms: number
+ 
+-  constructor(gcDelayMs = 60_000) {
++  constructor(gcDelayMs = 60_000, maxRooms = 100) {
+     this.gcDelayMs = gcDelayMs
++    this.maxRooms = maxRooms
+   }
+ 
+   get(id: string): Room | undefined {
+     return this.rooms.get(id)
+   }
+ 
+-  getOrCreate(id: string, maxUsers?: number): Room {
++  /** 房间数达上限且该房不存在时返回 null（调用方拒绝连接），防无限开房耗尽内存 */
++  getOrCreate(id: string, maxUsers?: number): Room | null {
+     let room = this.rooms.get(id)
+     if (!room) {
++      if (this.rooms.size >= this.maxRooms) return null
+       room = new Room(id, maxUsers)
+       this.rooms.set(id, room)
+     }
+diff --git a/src/web/canvas.ts b/src/web/canvas.ts
+new file mode 100644
+index 0000000..7753c7f
+--- /dev/null
++++ b/src/web/canvas.ts
+@@ -0,0 +1,241 @@
++export {} // 标记为模块，避免 interface Node 与 DOM 全局 Node 合并
++
++interface Stage { id: string; name: string; status: string; note: string }
++interface Engine { id: string; name: string; status: string; runs: number; lastRun: string | null; reviewerVersion: string | null }
++interface PR { number: number; merged: boolean; reverted: boolean; rounds: number; findings: number; high: number; medium: number; low: number }
++interface Cat { category: string; total: number; fixed: number; high: number }
++interface Pipeline {
++  generatedAt: string
++  store: string
++  stages: Stage[]
++  engines: Engine[]
++  prs: PR[]
++  findingsByCategory: Cat[]
++}
++
++interface Node {
++  id: string
++  kind: 'stage' | 'pr' | 'cat' | 'engine'
++  title: string
++  sub: string
++  dot: string
++  x: number
++  y: number
++}
++
++const viewport = document.getElementById('viewport')!
++const world = document.getElementById('world')!
++const edgesSvg = document.getElementById('edges')!
++const hudStore = document.getElementById('hud-store')!
++
++const view = { x: 60, y: 80, scale: 1 }
++let nodes: Node[] = []
++let edges: Array<[string, string]> = []
++// 用户手动拖拽过的位置，刷新时保留（不被布局公式覆盖）
++const userPos = new Map<string, { x: number; y: number }>()
++
++function applyView() {
++  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`
++}
++
++function statusDot(s: string): string {
++  return s === 'ok' ? 'dot-ok' : s === 'warn' ? 'dot-warn' : s === 'fail' ? 'dot-fail' : 'dot-idle'
++}
++
++function buildGraph(data: Pipeline) {
++  nodes = []
++  edges = []
++  const W = 240
++  const H = 110
++
++  // 四阶段横排
++  data.stages.forEach((s, i) => {
++    nodes.push({ id: `stage-${s.id}`, kind: 'stage', title: s.name, sub: s.note, dot: statusDot(s.status), x: i * W, y: 0 })
++    const prev = data.stages[i - 1]
++    if (prev) edges.push([`stage-${prev.id}`, `stage-${s.id}`])
++  })
++
++  // 引擎行
++  data.engines.forEach((e, i) => {
++    nodes.push({
++      id: `engine-${e.id}`,
++      kind: 'engine',
++      title: e.name,
++      sub: `${e.status} · runs=${e.runs}${e.reviewerVersion ? ` · v=${e.reviewerVersion.slice(0, 8)}` : ''}`,
++      dot: e.status === 'running' ? 'dot-ok' : 'dot-idle',
++      x: i * W,
++      y: H + 40,
++    })
++    edges.push(['stage-during', `engine-${e.id}`])
++  })
++
++  // PR 网格
++  data.prs.forEach((p, i) => {
++    const col = i % 4
++    const row = Math.floor(i / 4)
++    const dot = p.high > 0 ? 'dot-high' : p.findings > 0 ? 'dot-med' : 'dot-ok'
++    nodes.push({
++      id: `pr-${p.number}`,
++      kind: 'pr',
++      title: `PR#${p.number}${p.merged ? ' ✅' : ''}${p.reverted ? ' ⏪' : ''}`,
++      sub: `${p.rounds} 轮 · ${p.findings} findings (h${p.high}/m${p.medium}/l${p.low})`,
++      dot,
++      x: col * (W - 40),
++      y: (H + 40) * 2 + row * (H - 20),
++    })
++    edges.push(['stage-during', `pr-${p.number}`])
++  })
++
++  // 分类聚类
++  data.findingsByCategory.forEach((c, i) => {
++    const col = i % 4
++    const row = Math.floor(i / 4)
++    const catName = String(c.category ?? 'uncategorized')
++    nodes.push({
++      id: `cat-${catName}`,
++      kind: 'cat',
++      title: catName,
++      sub: `${c.total} 条 · 已修 ${c.fixed} · high ${c.high}`,
++      dot: c.high > 0 ? 'dot-high' : c.total > c.fixed ? 'dot-med' : 'dot-ok',
++      x: col * (W - 40) + 520,
++      y: (H + 40) * 2 + row * (H - 20),
++    })
++  })
++
++  // 恢复用户拖拽过的位置
++  for (const n of nodes) {
++    const u = userPos.get(n.id)
++    if (u) {
++      n.x = u.x
++      n.y = u.y
++    }
++  }
++  // 裁剪已不存在节点的位置，防 userPos 无限增长
++  const alive = new Set(nodes.map((n) => n.id))
++  for (const key of [...userPos.keys()]) {
++    if (!alive.has(key)) userPos.delete(key)
++  }
++}
++
++function render() {
++  // 清旧节点（保留 svg）
++  world.querySelectorAll('.node').forEach((n) => n.remove())
++  for (const n of nodes) {
++    const el = document.createElement('div')
++    el.className = `node kind-${n.kind}`
++    el.dataset.id = n.id
++    el.style.left = `${n.x}px`
++    el.style.top = `${n.y}px`
++    el.innerHTML = `<div class="n-title"><span class="n-dot ${n.dot}"></span>${escapeHtml(n.title)}</div><div class="n-sub">${escapeHtml(n.sub)}</div>`
++    world.appendChild(el)
++  }
++  drawEdges()
++}
++
++function nodeCenter(id: string): { x: number; y: number } | null {
++  const n = nodes.find((x) => x.id === id)
++  if (!n) return null
++  const el = world.querySelector(`.node[data-id="${id}"]`) as HTMLElement | null
++  const w = el ? el.offsetWidth : 160
++  const h = el ? el.offsetHeight : 60
++  return { x: n.x + w / 2, y: n.y + h / 2 }
++}
++
++function drawEdges() {
++  edgesSvg.innerHTML = ''
++  for (const [a, b] of edges) {
++    const pa = nodeCenter(a)
++    const pb = nodeCenter(b)
++    if (!pa || !pb) continue
++    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
++    line.setAttribute('x1', String(pa.x))
++    line.setAttribute('y1', String(pa.y))
++    line.setAttribute('x2', String(pb.x))
++    line.setAttribute('y2', String(pb.y))
++    line.setAttribute('stroke', '#4b5563')
++    line.setAttribute('stroke-width', '1.5')
++    edgesSvg.appendChild(line)
++  }
++}
++
++function escapeHtml(s: string): string {
++  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
++}
++
++// === pan / zoom / drag ===
++let panning = false
++let dragNode: { id: string; ox: number; oy: number } | null = null
++let last = { x: 0, y: 0 }
++
++viewport.addEventListener('mousedown', (e) => {
++  e.preventDefault() // 防原生文本选择/拖拽干扰
++  const nodeEl = (e.target as HTMLElement).closest('.node') as HTMLElement | null
++  if (nodeEl) {
++    const n = nodes.find((x) => x.id === nodeEl.dataset.id)
++    if (!n) return
++    dragNode = { id: n.id, ox: e.clientX, oy: e.clientY }
++    last = { x: n.x, y: n.y }
++  } else {
++    panning = true
++    viewport.classList.add('panning')
++    last = { x: e.clientX, y: e.clientY }
++  }
++})
++
++window.addEventListener('mousemove', (e) => {
++  if (dragNode) {
++    const n = nodes.find((x) => x.id === dragNode!.id)
++    if (!n) return
++    n.x = last.x + (e.clientX - dragNode.ox) / view.scale
++    n.y = last.y + (e.clientY - dragNode.oy) / view.scale
++    userPos.set(n.id, { x: n.x, y: n.y })
++    const el = world.querySelector(`.node[data-id="${n.id}"]`) as HTMLElement | null
++    if (el) {
++      el.style.left = `${n.x}px`
++      el.style.top = `${n.y}px`
++    }
++    drawEdges()
++  } else if (panning) {
++    view.x += e.clientX - last.x
++    view.y += e.clientY - last.y
++    last = { x: e.clientX, y: e.clientY }
++    applyView()
++  }
++})
++
++window.addEventListener('mouseup', () => {
++  panning = false
++  dragNode = null
++  viewport.classList.remove('panning')
++})
++
++viewport.addEventListener('wheel', (e) => {
++  e.preventDefault()
++  const factor = e.deltaY < 0 ? 1.1 : 0.9
++  const next = Math.min(3, Math.max(0.3, view.scale * factor))
++  // 以光标为中心缩放
++  const rect = viewport.getBoundingClientRect()
++  const cx = e.clientX - rect.left
++  const cy = e.clientY - rect.top
++  view.x = cx - ((cx - view.x) / view.scale) * next
++  view.y = cy - ((cy - view.y) / view.scale) * next
++  view.scale = next
++  applyView()
++}, { passive: false })
++
++// === load ===
++async function load() {
++  try {
++    const res = await fetch('/api/pipeline')
++    const data = (await res.json()) as Pipeline
++    hudStore.textContent = `store=${data.store} · ${data.generatedAt.slice(11, 19)}`
++    buildGraph(data)
++    render()
++    applyView()
++  } catch (e) {
++    hudStore.textContent = `加载失败: ${e instanceof Error ? e.message : '未知'}`
++  }
++}
++
++load()
++setInterval(load, 30_000) // 30s 自动刷新状态
+diff --git a/src/web/main.ts b/src/web/main.ts
+index 3238cea..aab435d 100644
+--- a/src/web/main.ts
++++ b/src/web/main.ts
+@@ -55,6 +55,7 @@ const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+ 
+ let ws: WebSocket
+ let retry = 0
++let stopReconnect = false // 服务端明确拒绝（满员/重名/房间超限）时不再重连空转
+ 
+ function connect() {
+   ws = new WebSocket(
+@@ -70,10 +71,16 @@ function connect() {
+     input.focus()
+   })
+ 
+-  ws.addEventListener('close', () => {
++  ws.addEventListener('close', (ev: CloseEvent) => {
+     connBadge.classList.remove('online')
+     input.disabled = true
+     sendBtn.disabled = true
++    // 4001 = 服务端明确拒绝（房间超限等）→ 停止重连空转
++    if (ev.code === 4001) stopReconnect = true
++    if (stopReconnect) {
++      connBadge.textContent = '已被拒绝加入'
++      return
++    }
+     retry++
+     if (retry > 10) {
+       connBadge.textContent = '已断开（停止重连）'
+@@ -105,6 +112,8 @@ function connect() {
+       case MsgType.system: {
+         const p = msg.payload as SystemPayload
+         appendSystem(p.reason)
++        // 服务端明确拒绝加入 → 停止重连空转（^ 锚定，防用户名含 full/taken 误触发）
++        if (/^(room full|name taken|too many rooms)/i.test(p.reason)) stopReconnect = true
+         break
+       }
+       case MsgType.demo: {
+diff --git a/test/e2e-pipeline.test.ts b/test/e2e-pipeline.test.ts
+new file mode 100644
+index 0000000..ba9b6e2
+--- /dev/null
++++ b/test/e2e-pipeline.test.ts
+@@ -0,0 +1,72 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { buildApp, defaultDirs } from '../src/server/app.ts'
++
++let portSeq = 3220
++const nextPort = () => ++portSeq
++
++async function startServer(port: number) {
++  const app = buildApp(defaultDirs())
++  await app.listen({ port, host: '127.0.0.1' })
++  return app
++}
++
++test('/api/pipeline 返回合法结构（无 PG 时降级）', async (t) => {
++  const port = nextPort()
++  const app = await startServer(port)
++  t.after(() => app.close())
++
++  const res = await fetch(`http://127.0.0.1:${port}/api/pipeline`)
++  assert.equal(res.status, 200)
++  const data = (await res.json()) as {
++    store: string
++    stages: unknown[]
++    engines: unknown[]
++    prs: unknown[]
++    findingsByCategory: unknown[]
++    guardrails: { revertRate: number | null }
++  }
++  assert.ok(['pg', 'degraded'].includes(data.store))
++  assert.equal(data.stages.length, 4)
++  assert.ok(Array.isArray(data.engines))
++  assert.ok(Array.isArray(data.prs))
++  assert.ok(Array.isArray(data.findingsByCategory))
++  assert.equal(data.guardrails.revertRate, null)
++})
++
++test('PG 聚合路径（仅在提供 PG_DSN 时运行，CI 无 PG 自动 skip）', async (t) => {
++  const dsn = process.env.PG_DSN
++  if (!dsn) {
++    t.skip('无 PG_DSN，跳过 PG 聚合路径')
++    return
++  }
++  const port = nextPort()
++  const app = buildApp(defaultDirs())
++  await app.listen({ port, host: '127.0.0.1' })
++  t.after(() => app.close())
++
++  const res = await fetch(`http://127.0.0.1:${port}/api/pipeline`)
++  assert.equal(res.status, 200)
++  const data = (await res.json()) as { store: string; prs: Array<{ number: number; rounds: number }>; findingsByCategory: Array<{ category: string }> }
++  assert.equal(data.store, 'pg', '提供 PG_DSN 时应走 pg 而非降级')
++  assert.ok(Array.isArray(data.prs))
++  assert.ok(Array.isArray(data.findingsByCategory))
++  // category 不应出现 null（COALESCE 生效）
++  assert.ok(data.findingsByCategory.every((c) => c.category !== null && c.category !== ''))
++})
++
++test('/canvas.html 与资源可访问', async (t) => {
++  const port = nextPort()
++  const app = await startServer(port)
++  t.after(() => app.close())
++
++  const html = await fetch(`http://127.0.0.1:${port}/canvas.html`)
++  assert.equal(html.status, 200)
++  assert.match(await html.text(), /viewport/)
++
++  const css = await fetch(`http://127.0.0.1:${port}/canvas.css`)
++  assert.equal(css.status, 200)
++
++  const js = await fetch(`http://127.0.0.1:${port}/js/canvas.js`)
++  assert.equal(js.status, 200)
++})
+diff --git a/test/e2e-room.test.ts b/test/e2e-room.test.ts
+index 1d3d099..ab91d34 100644
+--- a/test/e2e-room.test.ts
++++ b/test/e2e-room.test.ts
+@@ -44,6 +44,16 @@ function waitFor(messages: WsMessage[], type: MsgType, timeoutMs = 2000): Promis
+   })
+ }
+ 
++/** 轮询直到条件成立或超时，替代固定 sleep，降低 CI 时序脆弱性 */
++async function waitUntil(fn: () => Promise<boolean>, timeoutMs = 2000): Promise<boolean> {
++  const deadline = Date.now() + timeoutMs
++  while (Date.now() < deadline) {
++    if (await fn()) return true
++    await new Promise((r) => setTimeout(r, 50))
++  }
++  return false
++}
++
+ test('不同房间消息隔离', async (t) => {
+   const port = nextPort()
+   const app = await startServer(port)
+@@ -120,11 +130,13 @@ test('空房延迟回收（真验证回收发生）', async (t) => {
+ 
+   // 延迟内：房间还在（users=0）
+   await new Promise((r) => setTimeout(r, 100))
+-  let rooms = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string; users: number }>
++  const rooms = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string; users: number }>
+   assert.ok(rooms.some((r) => r.id === 'gcRoom'), '延迟期内房间应仍存在')
+ 
+-  // 超过 gcDelay：房间应被回收
+-  await new Promise((r) => setTimeout(r, 500))
+-  rooms = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string; users: number }>
+-  assert.ok(!rooms.some((r) => r.id === 'gcRoom'), '超过 gcDelay 后空房应被回收')
++  // 超过 gcDelay：轮询等待回收发生（避免固定 sleep 的时序脆弱）
++  const gone = await waitUntil(async () => {
++    const rs = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string }>
++    return !rs.some((r) => r.id === 'gcRoom')
++  }, 3000)
++  assert.ok(gone, '超过 gcDelay 后空房应被回收')
+ })
+diff --git a/tsconfig.json b/tsconfig.json
+index 5c0e1a9..fa2868a 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -10,7 +10,8 @@
+     "verbatimModuleSyntax": true,
+     "erasableSyntaxOnly": true,
+     "noEmit": true,
+-    "allowImportingTsExtensions": true
++    "allowImportingTsExtensions": true,
++    "skipLibCheck": true
+   },
+   "include": ["src/**/*", "test/**/*"]
+ }

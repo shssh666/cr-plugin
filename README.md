@@ -13,6 +13,8 @@ cr-plugin/
 ├── skills/m1-verify/            # M1 验证工具箱：verify run/shot + review fresh + 三技能 playbook
 ├── reviewer/                    # cr-m2 审查引擎（Node 24，增量审查 + 收敛四规则 + 投票过滤 + PG 落库）
 ├── m1/                          # M1 脚本：verify-run / review-fresh / verify-shot（零依赖 node ≥18）
+├── m4/                          # M4 跑分器：eval-run（离线重放 × 阈值对照计分）
+├── eval/                        # M4 eval 集：cases.json（人工裁决种子）+ diffs/（PR 终态 diff 快照）
 ├── recipes/                     # 服务器菜谱（PG 部署 / compose+env_file 部署 / 密钥轮换）
 ├── cordis.patch.yml             # DSH bundle 挂载点（skills provider）
 └── lib/index.js                 # 运行时入口（v0 占位，未注册工具）
@@ -27,6 +29,18 @@ node m1/verify-shot.mjs --actual a.png --expected b.png   # UI 截图留证（SH
 ```
 
 「我做完了」=「verify run 全绿的证据文件」；P1 验收标准（PR 必附 verify 证据）由此落地。
+
+## M4 eval 集（eval/ + m4/）
+
+32 例人工裁决种子（26 tp / 5 fp / 1 intentional）：cr-plugin PR#2/#3（M2 dropped 6 + fresh-eyes 两轮 16）+ discussion-room PR#6/#7/#9（计划表裁决映射）；PR#5/PR#8 因裁决粒度/分支缺失暂不入集（见 cases.json 注）。5 份 diff 快照（squash^..squash = PR 终态）离线可重放。
+
+```bash
+node m4/eval-run.mjs --list        # 列种子
+node m4/eval-run.mjs --mock        # 链路自检（不调 LLM）
+node m4/eval-run.mjs               # 真跑：N 票采样 × min=1..N 阈值对照计分
+```
+
+跑分器复用生产同款 prompt 与投票管线（reviewer/review.mjs 导出）；`eval_cases`/`eval_runs` 落 PG（幂等种子 + 每批入档，无 PG 降级 jsonl）。scorecard 回答「CR_VOTE_MIN 压不压召回」这类阈值问题。
 
 ## 实战履历（试点仓 discussion-room，9 PR 全合并）
 

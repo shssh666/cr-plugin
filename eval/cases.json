@@ -1,0 +1,87 @@
+{
+  "$comment": "M4 eval 集 v1 · 2026-11-04。种子=文档化裁决的真/假 findings。label: tp=真 bug（应抓）/ fp=假阳（不应报）/ intentional=带理由关闭（不应报）。origin: m2_dropped/m2_posted/fe_r1/fe_r2。PR#5（叙述 11 vs PG 8 粒度不合）与 PR#8（分支已删无 diff）不入集，待 PR 线程考古。fresh-eyes 来源无 M2 八类分类 → category=null，匹配按 path（同路径多例共享证据，v1 已知限度）。**快照原则（首跑实证）**：diff 必须取『bug 存在时』的状态——squash 终态会抹掉已在后续提交修复的中间态 bug（首跑中此类例全部 0 票）。故 crp-pr2→5905d16（M2 审查与 fe_r1 所见），crp-pr3→95ad6a3（fe_r2 所见）。",
+  "sets": [
+    {
+      "id": "crp-pr2",
+      "repo": "shssh666/cr-plugin",
+      "diff": "diffs/crp-pr2.patch",
+      "base": "a22dbae",
+      "head": "5905d16",
+      "context": "M1 验证工具箱初始版（PR#2 首版 5905d16，含 11 条已知硬伤；M2 审查与 fresh-eyes r1 均对此版本）",
+      "cases": [
+        { "path": "m1/verify-run.mjs", "line": 50, "category": "api-contract", "sev": "medium", "label": "tp", "origin": "m2_dropped", "ref": "PG#37", "title": "VERIFY_CMDS 按 ;/, 拆分截断含分隔符命令", "confirmed_by": "PR#2 M2 dropped 逐条裁决（2026-11-04 会话），已修 f70aa49" },
+        { "path": "skills/m1-verify/SKILL.md", "line": 68, "category": "api-contract", "sev": "low", "label": "tp", "origin": "m2_dropped", "ref": "PG#41", "title": "端到端示例裸 -- 与 Windows 注记冲突", "confirmed_by": "PR#2 M2 dropped 逐条裁决，已修 f70aa49" },
+        { "path": "m1/review-fresh.mjs", "line": 55, "category": "api-contract", "sev": "medium", "label": "tp", "origin": "m2_dropped+fe_r1", "ref": "PG#39=FE-R1#3", "title": "diff 三点与 --stat 两点区间不一致", "confirmed_by": "M2 裁 by-design 后 fresh-eyes 独立判真（同题），终裁 tp，已修" },
+        { "path": "m1/verify-run.mjs", "line": 74, "category": "security/input", "sev": "medium", "label": "fp", "origin": "m2_dropped", "ref": "PG#36", "title": "shell:true 执行 VERIFY_CMDS 可注入任意命令", "confirmed_by": "PR#2 裁决：dev 工具执行用户自设命令非注入面" },
+        { "path": "m1/verify-run.mjs", "line": 74, "category": "resource-limits", "sev": "medium", "label": "fp", "origin": "m2_dropped", "ref": "PG#38", "title": "spawnSync+32MB 与『流式』约定相悖", "confirmed_by": "PR#2 裁决：服务器流式约定误用到 dev CLI" },
+        { "path": "m1/verify-shot.mjs", "line": 33, "category": "security/input", "sev": "low", "label": "fp", "origin": "m2_dropped", "ref": "PG#40", "title": "SHOT_CMD 以 shell:true 执行无来源约束", "confirmed_by": "PR#2 裁决：同 PG#36，用户自设非注入面" },
+        { "path": "m1/verify-shot.mjs", "line": 49, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#1", "title": "文档主打 SHOT_CMD 用法必然 exit 2（--actual 矛盾）", "confirmed_by": "fresh-eyes r1 裁决，已修（--actual 前置校验）" },
+        { "path": "m1/review-fresh.mjs", "line": 53, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#2", "title": "默认区间漏审未跟踪新文件", "confirmed_by": "fresh-eyes r1 裁决，已修（untracked 检出告警）" },
+        { "path": "m1/review-fresh.mjs", "line": 91, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#4", "title": "```diff 围栏无兜底可被提前闭合", "confirmed_by": "fresh-eyes r1 裁决，已修（codeFence）" },
+        { "path": "m1/verify-run.mjs", "line": 112, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#5", "title": "脏工作区不影响结论与退出码（证据可信度）", "confirmed_by": "fresh-eyes r1 裁决，已修（--require-clean）" },
+        { "path": "lib/index.js", "line": 5, "category": null, "sev": "low", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#6", "title": "导出 version 未随 package.json 对齐", "confirmed_by": "fresh-eyes r1 裁决，已修（0.4.0-dev）" },
+        { "path": "m1/review-fresh.mjs", "line": 40, "category": null, "sev": "low", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#7", "title": "git/package.json 失败原因被吞（可诊断性）", "confirmed_by": "fresh-eyes r1 裁决，已修（lastGitErr/try-catch）" },
+        { "path": "m1/verify-run.mjs", "line": 102, "category": null, "sev": "low", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#8", "title": "status===null 一律标 TIMEOUT 失真", "confirmed_by": "fresh-eyes r1 裁决，已修（spawnErr 区分）" },
+        { "path": "m1/review-fresh.mjs", "line": 107, "category": null, "sev": "low", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#9", "title": "--out 相对 process.cwd() 解析与 --cwd 语义矛盾", "confirmed_by": "fresh-eyes r1 裁决，已修（按 --cwd 解析）" },
+        { "path": "m1/review-fresh.mjs", "line": 32, "category": null, "sev": "low", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#10", "title": "--max Number() 无校验 NaN 静默失效", "confirmed_by": "fresh-eyes r1 裁决，已修（isFinite→后续 isInteger）" },
+        { "path": "m1/verify-run.mjs", "line": 106, "category": null, "sev": "nit", "label": "tp", "origin": "fe_r1", "ref": "FE-R1#11", "title": "(combined||无输出) 死代码", "confirmed_by": "fresh-eyes r1 裁决，已修（hasOutput 判定）" }
+      ]
+    },
+    {
+      "id": "crp-pr3",
+      "repo": "shssh666/cr-plugin",
+      "diff": "diffs/crp-pr3.patch",
+      "base": "db824a5",
+      "head": "95ad6a3",
+      "context": "M1 fresh-eyes 一轮修复首版 95ad6a3（含二轮 6 条已知问题；fresh-eyes r2 对此版本，squash 终态已抹掉现场）",
+      "cases": [
+        { "path": "m1/verify-run.mjs", "line": 132, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#1", "title": "--require-clean 在 git 不可用时静默放行", "confirmed_by": "fresh-eyes r2 裁决，已修（dirty=null 判失败）" },
+        { "path": "m1/verify-run.mjs", "line": 80, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#2", "title": "脏文件排除过宽 + rename 条目解析错误", "confirmed_by": "fresh-eyes r2 裁决，已修（精确匹配+rename 新路径）" },
+        { "path": "m1/review-fresh.mjs", "line": 75, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#3", "title": "区间模式下 untracked 告警误报 + git add 死循环指引", "confirmed_by": "fresh-eyes r2 裁决，已修（仅工作区模式检测）" },
+        { "path": "m1/verify-run.mjs", "line": 122, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#4", "title": "非超时信号死亡被标 TIMEOUT", "confirmed_by": "fresh-eyes r2 裁决，已修（signaled 单列）" },
+        { "path": "m1/review-fresh.mjs", "line": 34, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#5", "title": "带值选项缺值不校验，崩溃退出码违反文档", "confirmed_by": "fresh-eyes r2 裁决，已修（val() 统一校验）" },
+        { "path": "m1/review-fresh.mjs", "line": 40, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#6", "title": "--max 接受小数可产出空成品", "confirmed_by": "fresh-eyes r2 裁决，已修（isInteger）" }
+      ]
+    },
+    {
+      "id": "dr-pr7",
+      "repo": "shssh666/discussion-room",
+      "diff": "diffs/dr-pr7.patch",
+      "base": "19180a8^",
+      "head": "19180a8",
+      "context": "多房间+断线重连+空房回收（PR#7，部署态 M2 首战：3 真 2 假阳）",
+      "cases": [
+        { "path": "src/server/app.ts", "line": 110, "category": "concurrency/state", "sev": "high", "label": "tp", "origin": "m2_posted", "ref": "PG#13", "title": "leave 后无条件 scheduleGC 误删仍有人的房间", "confirmed_by": "计划表 PR#7 复盘：3 真之一（leave 泄漏），已修" },
+        { "path": "test/e2e-room.test.ts", "line": 118, "category": "test/defect", "sev": "medium", "label": "tp", "origin": "m2_posted", "ref": "PG#16", "title": "空房回收测试未真正验证回收", "confirmed_by": "计划表 PR#7 复盘：3 真之一（GC 测试未验回收），已修" },
+        { "path": "src/server/app.ts", "line": 67, "category": "api-contract", "sev": "low", "label": "tp", "origin": "m2_posted", "ref": "PG#17", "title": "roomId 清洗后与前端展示不一致", "confirmed_by": "计划表 PR#7 复盘：3 真之一（roomId 重复清洗），已修" },
+        { "path": "src/server/room.ts", "line": 175, "category": "concurrency/state", "sev": "medium", "label": "fp", "origin": "m2_posted", "ref": "PG#14", "title": "scheduleGC 到期 userCount>0 只删 timer 房间泄漏", "confirmed_by": "计划表 PR#7 复盘：2 假阳之一（concurrency 推测）" },
+        { "path": "src/web/main.ts", "line": 95, "category": "ui/state", "sev": "medium", "label": "fp", "origin": "m2_posted", "ref": "PG#15", "title": "重连后状态未恢复且旧 ws 事件叠加", "confirmed_by": "计划表 PR#7 复盘：2 假阳之一（ui 推测）" }
+      ]
+    },
+    {
+      "id": "dr-pr6",
+      "repo": "shssh666/discussion-room",
+      "diff": "diffs/dr-pr6.patch",
+      "base": "ef27d24^",
+      "head": "ef27d24",
+      "context": "mermaid 直显（PR#6：M2 4 条，3 修 1 带理由关闭）",
+      "cases": [
+        { "path": "src/web/main.ts", "line": 345, "category": "security/input", "sev": "high", "label": "tp", "origin": "m2_posted", "ref": "PG#9", "title": "mermaid 渲染 innerHTML，securityLevel 不替代净化", "confirmed_by": "计划表 PR#6：3 修复之一（XSS），已修" },
+        { "path": "src/server/upload.ts", "line": 20, "category": "security/input", "sev": "medium", "label": "tp", "origin": "m2_posted", "ref": "PG#10", "title": ".mmd MAGIC 空数组跳过内容校验", "confirmed_by": "计划表 PR#6：3 修复之一，已修" },
+        { "path": "src/web/main.ts", "line": 325, "category": "resource-limits", "sev": "medium", "label": "tp", "origin": "m2_posted", "ref": "PG#11", "title": "200KB 上限全文读入后才检查且未限渲染并发", "confirmed_by": "计划表 PR#6：3 修复之一，已修" },
+        { "path": "src/server/app.ts", "line": 38, "category": "build/module-graph", "sev": "low", "label": "intentional", "origin": "m2_posted", "ref": "PG#12", "title": "vendor 路由 mermaid dist 路径静默降级", "confirmed_by": "PR#6『1 带理由关闭』——按排除法推断为唯一 low build 类（置信中）" }
+      ]
+    },
+    {
+      "id": "dr-pr9",
+      "repo": "shssh666/discussion-room",
+      "diff": "diffs/dr-pr9.patch",
+      "base": "4afb161^",
+      "head": "4afb161",
+      "context": "无限画布流水线看板（PR#9：M2 10 条 6 修 4 关，DSH 同报 1）。播种覆盖说明：6 修中仅 PG#27 的逐条裁决有文档确证（双引擎同报实证），其余 5 修与 4 关的逐条 split 无留档 → 暂不入集、待 PR 线程考古（recall 分母因此偏小，非选择性省略）",
+      "cases": [
+        { "path": "src/server/pipeline.ts", "line": 30, "category": "api-contract", "sev": "high", "label": "tp", "origin": "m2_posted", "ref": "PG#27", "title": "migrate 只 DROP mode 约束不重建，schema 分叉", "confirmed_by": "PR#9 双引擎同报实证（免复核高优），已修" }
+      ]
+    }
+  ]
+}

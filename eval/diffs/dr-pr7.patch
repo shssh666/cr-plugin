@@ -1,0 +1,411 @@
+diff --git a/package.json b/package.json
+index a90feb8..9f375df 100644
+--- a/package.json
++++ b/package.json
+@@ -15,6 +15,7 @@
+     "test:e2e:upload": "node scripts/build.mjs && node test/e2e-upload.test.ts",
+     "test:e2e:convert": "node scripts/build.mjs && CR_CONVERT_MODE=fake CR_FAKE_DELAY=500 node test/e2e-convert.test.ts",
+     "test:e2e:mermaid": "node scripts/build.mjs && node test/e2e-mermaid.test.ts",
++    "test:e2e:room": "node scripts/build.mjs && node test/e2e-room.test.ts",
+     "build": "node scripts/build.mjs",
+     "start": "node dist/server/index.js"
+   },
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 612c100..b787a43 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,15 +4,16 @@ import { createRequire } from 'node:module'
+ import fastify from 'fastify'
+ import fastifyStatic from '@fastify/static'
+ import { WebSocketServer } from 'ws'
+-import { Room } from './room.ts'
++import { RoomRegistry } from './room.ts'
+ import uploadPlugin from './upload.ts'
+ import convertPlugin from './convert.ts'
+-import { MsgType, type WsMessage } from '../shared/protocol.ts'
++import { MsgType, sanitizeRoomId, type WsMessage } from '../shared/protocol.ts'
+ 
+ export interface AppOptions {
+   publicDir: string
+   webDir: string
+   sharedDir: string
++  gcDelayMs?: number
+ }
+ 
+ /** 构建产物存在用 dist，否则回退源码目录（dev 模式页面需先 build 一次） */
+@@ -49,8 +50,10 @@ export function buildApp(opts: AppOptions) {
+ 
+   app.get('/healthz', async () => ({ ok: true, ts: Date.now() }))
+ 
+-  // 单房间 MVP；后续 PR#7 做多房间管理
+-  const room = new Room('default')
++  // 多房间管理：房间按需创建，空房延迟回收（PR#7）
++  const registry = new RoomRegistry(opts.gcDelayMs)
++
++  app.get('/rooms', async () => registry.list())
+ 
+   // 直接用 ws 库处理 upgrade，绕过 @fastify/websocket 封装问题
+   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 }) // 64KB 帧上限
+@@ -62,6 +65,8 @@ export function buildApp(opts: AppOptions) {
+     }
+     wss.handleUpgrade(request, socket, head, (ws) => {
+       const name = url.searchParams.get('name')?.trim() || `user-${Math.random().toString(36).slice(2, 6)}`
++      const roomId = sanitizeRoomId(url.searchParams.get('room'))
++      const room = registry.getOrCreate(roomId)
+       let clientId: string | null = null
+ 
+       room
+@@ -102,7 +107,13 @@ export function buildApp(opts: AppOptions) {
+       })
+ 
+       ws.on('close', () => {
+-        if (clientId) void room.leave(clientId)
++        if (clientId) {
++          // leave 失败也要安排回收，否则房间泄漏（M2 finding）
++          void room.leave(clientId).then(
++            () => registry.scheduleGC(roomId),
++            () => registry.scheduleGC(roomId),
++          )
++        }
+       })
+     })
+   })
+diff --git a/src/server/room.ts b/src/server/room.ts
+index ed457b1..0b8190c 100644
+--- a/src/server/room.ts
++++ b/src/server/room.ts
+@@ -136,3 +136,55 @@ function safeSend(socket: WebSocket, msg: WsMessage): void {
+     // swallow — client already gone
+   }
+ }
++
++/**
++ * RoomRegistry：多房间管理。房间按需创建，空房间延迟回收。
++ * 回收走串行队列外的简单 setTimeout（房间无状态，回收只是删 Map 条目）。
++ */
++export class RoomRegistry {
++  private rooms = new Map<string, Room>()
++  private gcTimers = new Map<string, ReturnType<typeof setTimeout>>()
++  readonly gcDelayMs: number
++
++  constructor(gcDelayMs = 60_000) {
++    this.gcDelayMs = gcDelayMs
++  }
++
++  get(id: string): Room | undefined {
++    return this.rooms.get(id)
++  }
++
++  getOrCreate(id: string, maxUsers?: number): Room {
++    let room = this.rooms.get(id)
++    if (!room) {
++      room = new Room(id, maxUsers)
++      this.rooms.set(id, room)
++    }
++    // 有人进来就取消回收
++    const t = this.gcTimers.get(id)
++    if (t) {
++      clearTimeout(t)
++      this.gcTimers.delete(id)
++    }
++    return room
++  }
++
++  /** 房间空了之后安排回收；gcDelay 内有人进来则取消 */
++  scheduleGC(id: string): void {
++    if (this.gcTimers.has(id)) return
++    const t = setTimeout(() => {
++      const room = this.rooms.get(id)
++      if (room && room.userCount === 0) {
++        this.rooms.delete(id)
++      }
++      this.gcTimers.delete(id)
++    }, this.gcDelayMs)
++    // 不阻塞进程退出
++    if (typeof t === 'object' && 'unref' in t) t.unref()
++    this.gcTimers.set(id, t)
++  }
++
++  list(): Array<{ id: string; users: number }> {
++    return [...this.rooms.entries()].map(([id, r]) => ({ id, users: r.userCount }))
++  }
++}
+diff --git a/src/shared/protocol.ts b/src/shared/protocol.ts
+index 9ffc335..ac8c6d8 100644
+--- a/src/shared/protocol.ts
++++ b/src/shared/protocol.ts
+@@ -36,3 +36,8 @@ export interface DemoPayload {
+   total?: number
+   presenter?: string
+ }
++
++/** 房间 ID 清洗：服务端与前端共用单一实现，防规则漂移 */
++export function sanitizeRoomId(raw: string | null | undefined): string {
++  return (raw || 'default').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'default'
++}
+diff --git a/src/web/main.ts b/src/web/main.ts
+index c651817..31aed00 100644
+--- a/src/web/main.ts
++++ b/src/web/main.ts
+@@ -1,4 +1,4 @@
+-import { MsgType, type ChatPayload, type DemoPayload, type PresencePayload, type SystemPayload, type WsMessage } from '../shared/protocol.ts'
++import { MsgType, sanitizeRoomId, type ChatPayload, type DemoPayload, type PresencePayload, type SystemPayload, type WsMessage } from '../shared/protocol.ts'
+ 
+ const app = document.querySelector<HTMLDivElement>('#app')
+ if (!app) throw new Error('#app missing')
+@@ -49,55 +49,76 @@ const input = document.getElementById('msg-input') as HTMLInputElement
+ const sendBtn = form.querySelector('button')!
+ 
+ const userName = prompt('你的昵称', `user-${Math.random().toString(36).slice(2, 6)}`) || 'anon'
++const roomId = sanitizeRoomId(new URLSearchParams(location.search).get('room'))
++document.querySelector('.topbar h1')!.textContent = `讨论室 · ${roomId}`
+ const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+-const ws = new WebSocket(`${protocol}://${location.host}/ws?name=${encodeURIComponent(userName)}`)
+-
+-ws.addEventListener('open', () => {
+-  connBadge.textContent = '在线'
+-  connBadge.classList.add('online')
+-  input.disabled = false
+-  sendBtn.disabled = false
+-  uploadBtn.disabled = false
+-  input.focus()
+-})
+ 
+-ws.addEventListener('close', () => {
+-  connBadge.textContent = '已断开'
+-  connBadge.classList.remove('online')
+-  input.disabled = true
+-  sendBtn.disabled = true
+-})
++let ws: WebSocket
++let retry = 0
+ 
+-ws.addEventListener('message', (ev) => {
+-  let msg: WsMessage
+-  try {
+-    msg = JSON.parse(ev.data)
+-  } catch {
+-    return
+-  }
+-  switch (msg.type) {
+-    case MsgType.chat: {
+-      const p = msg.payload as ChatPayload
+-      appendMessage(p.from, p.text, p.from === userName)
+-      break
+-    }
+-    case MsgType.presence: {
+-      const p = msg.payload as PresencePayload
+-      connBadge.title = `在线 ${p.users.length}/${p.max}: ${p.users.join(', ')}`
+-      break
++function connect() {
++  ws = new WebSocket(
++    `${protocol}://${location.host}/ws?room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(userName)}`,
++  )
++
++  ws.addEventListener('open', () => {
++    retry = 0
++    connBadge.textContent = '在线'
++    connBadge.classList.add('online')
++    input.disabled = false
++    sendBtn.disabled = false
++    uploadBtn.disabled = false
++    input.focus()
++  })
++
++  ws.addEventListener('close', () => {
++    connBadge.classList.remove('online')
++    input.disabled = true
++    sendBtn.disabled = true
++    uploadBtn.disabled = true
++    retry++
++    if (retry > 10) {
++      connBadge.textContent = '已断开（停止重连）'
++      return
+     }
+-    case MsgType.system: {
+-      const p = msg.payload as SystemPayload
+-      appendSystem(p.reason)
+-      break
++    const delay = Math.min(15_000, 1000 * 2 ** (retry - 1))
++    connBadge.textContent = `重连中(${retry})…`
++    setTimeout(connect, delay)
++  })
++
++  ws.addEventListener('message', (ev) => {
++    let msg: WsMessage
++    try {
++      msg = JSON.parse(ev.data)
++    } catch {
++      return
+     }
+-    case MsgType.demo: {
+-      const p = msg.payload as DemoPayload
+-      showDemo(p.file, p.page, p.presenter)
+-      break
++    switch (msg.type) {
++      case MsgType.chat: {
++        const p = msg.payload as ChatPayload
++        appendMessage(p.from, p.text, p.from === userName)
++        break
++      }
++      case MsgType.presence: {
++        const p = msg.payload as PresencePayload
++        connBadge.title = `在线 ${p.users.length}/${p.max}: ${p.users.join(', ')}`
++        break
++      }
++      case MsgType.system: {
++        const p = msg.payload as SystemPayload
++        appendSystem(p.reason)
++        break
++      }
++      case MsgType.demo: {
++        const p = msg.payload as DemoPayload
++        showDemo(p.file, p.page, p.presenter)
++        break
++      }
+     }
+-  }
+-})
++  })
++}
++
++connect()
+ 
+ form.addEventListener('submit', (e) => {
+   e.preventDefault()
+diff --git a/test/e2e-room.test.ts b/test/e2e-room.test.ts
+new file mode 100644
+index 0000000..1d3d099
+--- /dev/null
++++ b/test/e2e-room.test.ts
+@@ -0,0 +1,130 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { once } from 'node:events'
++import WebSocket from 'ws'
++import { buildApp, defaultDirs } from '../src/server/app.ts'
++import { MsgType, type ChatPayload, type WsMessage } from '../src/shared/protocol.ts'
++
++let portSeq = 3200
++const nextPort = () => ++portSeq
++
++async function startServer(port: number) {
++  const app = buildApp(defaultDirs())
++  await app.listen({ port, host: '127.0.0.1' })
++  return app
++}
++
++function connect(port: number, name: string, room = 'default'): Promise<{ ws: WebSocket; messages: WsMessage[] }> {
++  return new Promise((resolve, reject) => {
++    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${room}&name=${encodeURIComponent(name)}`)
++    const messages: WsMessage[] = []
++    ws.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
++      try {
++        const str = Buffer.isBuffer(data) ? data.toString() : new TextDecoder().decode(data as ArrayBuffer)
++        messages.push(JSON.parse(str))
++      } catch {
++        /* ignore */
++      }
++    })
++    ws.on('open', () => resolve({ ws, messages }))
++    ws.on('error', reject)
++  })
++}
++
++function waitFor(messages: WsMessage[], type: MsgType, timeoutMs = 2000): Promise<WsMessage> {
++  const deadline = Date.now() + timeoutMs
++  return new Promise((resolve, reject) => {
++    const check = () => {
++      const found = messages.find((m) => m.type === type)
++      if (found) return resolve(found)
++      if (Date.now() > deadline) return reject(new Error(`timeout waiting ${type}`))
++      setTimeout(check, 20)
++    }
++    check()
++  })
++}
++
++test('不同房间消息隔离', async (t) => {
++  const port = nextPort()
++  const app = await startServer(port)
++  t.after(() => app.close())
++
++  const a = await connect(port, 'alice', 'roomA')
++  const b = await connect(port, 'bob', 'roomB')
++  const c = await connect(port, 'carol', 'roomA')
++  await waitFor(a.messages, MsgType.presence)
++  await waitFor(c.messages, MsgType.presence)
++
++  a.ws.send(JSON.stringify({ type: MsgType.chat, payload: { text: 'hello A' }, ts: Date.now() }))
++  // c 同房间应收到
++  const got = await waitFor(c.messages, MsgType.chat)
++  assert.equal((got.payload as ChatPayload).text, 'hello A')
++  // b 不同房间不应收到
++  await new Promise((r) => setTimeout(r, 300))
++  assert.equal(b.messages.filter((m) => m.type === MsgType.chat).length, 0)
++
++  a.ws.close()
++  b.ws.close()
++  c.ws.close()
++})
++
++test('每房间独立 4 人上限', async (t) => {
++  const port = nextPort()
++  const app = await startServer(port)
++  t.after(() => app.close())
++
++  const inA: Array<{ ws: WebSocket }> = []
++  for (let i = 0; i < 4; i++) inA.push(await connect(port, `a${i}`, 'capA'))
++  // 第 5 个进 capA 被拒
++  const fifth = await connect(port, 'overflow', 'capA')
++  const sys = await waitFor(fifth.messages, MsgType.system)
++  assert.match((sys.payload as { reason: string }).reason, /full/)
++  await once(fifth.ws, 'close')
++  // 但 capB 还能进
++  const b0 = await connect(port, 'b0', 'capB')
++  await waitFor(b0.messages, MsgType.presence)
++
++  for (const c of inA) c.ws.close()
++  b0.ws.close()
++})
++
++test('/rooms 列出房间及人数', async (t) => {
++  const port = nextPort()
++  const app = await startServer(port)
++  t.after(() => app.close())
++
++  const a = await connect(port, 'x', 'listRoom')
++  const b = await connect(port, 'y', 'listRoom')
++  await waitFor(b.messages, MsgType.presence)
++
++  const res = await fetch(`http://127.0.0.1:${port}/rooms`)
++  const rooms = (await res.json()) as Array<{ id: string; users: number }>
++  const target = rooms.find((r) => r.id === 'listRoom')
++  assert.ok(target, 'listRoom 应出现在列表')
++  assert.equal(target!.users, 2)
++
++  a.ws.close()
++  b.ws.close()
++})
++
++test('空房延迟回收（真验证回收发生）', async (t) => {
++  const port = nextPort()
++  // 注入短回收延迟，真正验证"空房被删"而非仅"延迟内还在"
++  const app = buildApp({ ...defaultDirs(), gcDelayMs: 300 })
++  await app.listen({ port, host: '127.0.0.1' })
++  t.after(() => app.close())
++
++  const a = await connect(port, 'solo', 'gcRoom')
++  await waitFor(a.messages, MsgType.presence)
++  a.ws.close()
++
++  // 延迟内：房间还在（users=0）
++  await new Promise((r) => setTimeout(r, 100))
++  let rooms = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string; users: number }>
++  assert.ok(rooms.some((r) => r.id === 'gcRoom'), '延迟期内房间应仍存在')
++
++  // 超过 gcDelay：房间应被回收
++  await new Promise((r) => setTimeout(r, 500))
++  rooms = (await (await fetch(`http://127.0.0.1:${port}/rooms`)).json()) as Array<{ id: string; users: number }>
++  assert.ok(!rooms.some((r) => r.id === 'gcRoom'), '超过 gcDelay 后空房应被回收')
++})
