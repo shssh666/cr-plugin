@@ -1,13 +1,13 @@
 {
-  "$comment": "M4 eval 集 v1 · 2026-11-04。种子=文档化裁决的真/假 findings；diff 快照在 diffs/（squash^..squash = PR 终态 diff）。label: tp=真 bug（应抓）/ fp=假阳（不应报）/ intentional=带理由关闭（不应报）。origin: m2_dropped/m2_posted/fe_r1/fe_r2。PR#5（叙述 11 vs PG 8 粒度不合）与 PR#8（分支已删无 diff）不入集，待 PR 线程考古。fresh-eyes 来源无 M2 八类分类 → category=null，匹配按 path（同路径多例共享证据，v1 已知限度）。",
+  "$comment": "M4 eval 集 v1 · 2026-11-04。种子=文档化裁决的真/假 findings。label: tp=真 bug（应抓）/ fp=假阳（不应报）/ intentional=带理由关闭（不应报）。origin: m2_dropped/m2_posted/fe_r1/fe_r2。PR#5（叙述 11 vs PG 8 粒度不合）与 PR#8（分支已删无 diff）不入集，待 PR 线程考古。fresh-eyes 来源无 M2 八类分类 → category=null，匹配按 path（同路径多例共享证据，v1 已知限度）。**快照原则（首跑实证）**：diff 必须取『bug 存在时』的状态——squash 终态会抹掉已在后续提交修复的中间态 bug（首跑中此类例全部 0 票）。故 crp-pr2→5905d16（M2 审查与 fe_r1 所见），crp-pr3→95ad6a3（fe_r2 所见）。",
   "sets": [
     {
       "id": "crp-pr2",
       "repo": "shssh666/cr-plugin",
       "diff": "diffs/crp-pr2.patch",
       "base": "a22dbae",
-      "head": "db824a5",
-      "context": "M1 验证工具箱初始版（PR#2，含 11 条已知硬伤）",
+      "head": "5905d16",
+      "context": "M1 验证工具箱初始版（PR#2 首版 5905d16，含 11 条已知硬伤；M2 审查与 fresh-eyes r1 均对此版本）",
       "cases": [
         { "path": "m1/verify-run.mjs", "line": 50, "category": "api-contract", "sev": "medium", "label": "tp", "origin": "m2_dropped", "ref": "PG#37", "title": "VERIFY_CMDS 按 ;/, 拆分截断含分隔符命令", "confirmed_by": "PR#2 M2 dropped 逐条裁决（2026-11-04 会话），已修 f70aa49" },
         { "path": "skills/m1-verify/SKILL.md", "line": 68, "category": "api-contract", "sev": "low", "label": "tp", "origin": "m2_dropped", "ref": "PG#41", "title": "端到端示例裸 -- 与 Windows 注记冲突", "confirmed_by": "PR#2 M2 dropped 逐条裁决，已修 f70aa49" },
@@ -32,8 +32,8 @@
       "repo": "shssh666/cr-plugin",
       "diff": "diffs/crp-pr3.patch",
       "base": "db824a5",
-      "head": "1b159fa",
-      "context": "M1 fresh-eyes 一轮修复（PR#3，含二轮 6 条已知问题）",
+      "head": "95ad6a3",
+      "context": "M1 fresh-eyes 一轮修复首版 95ad6a3（含二轮 6 条已知问题；fresh-eyes r2 对此版本，squash 终态已抹掉现场）",
       "cases": [
         { "path": "m1/verify-run.mjs", "line": 132, "category": null, "sev": "medium", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#1", "title": "--require-clean 在 git 不可用时静默放行", "confirmed_by": "fresh-eyes r2 裁决，已修（dirty=null 判失败）" },
         { "path": "m1/verify-run.mjs", "line": 80, "category": null, "sev": "low", "label": "tp", "origin": "fe_r2", "ref": "FE-R2#2", "title": "脏文件排除过宽 + rename 条目解析错误", "confirmed_by": "fresh-eyes r2 裁决，已修（精确匹配+rename 新路径）" },
