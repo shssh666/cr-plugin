@@ -6,16 +6,17 @@
 // 或新会话），不得附带任何作者解释。产出按 findings 格式回流 PR。
 //
 // 用法（在目标仓根执行，或 --cwd 指定）：
-//   node m1/review-fresh.mjs                          # base=main, head=工作区（含未提交的已跟踪改动）
-//   node m1/review-fresh.mjs --base main --head HEAD  # 显式区间（三点 base...head）
+//   node m1/review-fresh.mjs                          # 工作区模式：base=main → 工作区（含未提交的已跟踪改动）
+//   node m1/review-fresh.mjs --base main --head HEAD  # 区间模式：三点 base...head（审已提交内容）
 // 选项：
 //   --base <ref>   基线（默认 main）
-//   --head <ref>   目标（默认工作区；显式给出时用三点 base...head，diff 与 --stat 同区间）
+//   --head <ref>   目标（给出即区间模式，diff 与 --stat 同用三点 base...head；缺省为工作区模式）
 //   --out <file>   输出（相对路径按 --cwd 解析；默认 <cwd>/review-fresh-prompt.md）
 //   --cwd <dir>    目标仓根
-//   --max <chars>  diff 上限（默认 120000，超出截断并标注——超大 diff 应先拆 PR）
+//   --max <chars>  diff 上限（正整数，默认 120000，超出截断并标注——超大 diff 应先拆 PR）
 // 退出码：0 成品；1 diff 为空；2 使用错误
-// 注意：git diff 不含未跟踪新文件；本工具会检出并在提示词包顶部 + stderr 显式警告，避免漏审
+// 注意：git diff 不含未跟踪新文件。仅【工作区模式】检出 untracked 并警告（区间模式审已提交内容，
+//       与工作区 untracked 无关，不报警告以免误导复审者）
 // 零依赖：node >=18
 
 import { spawnSync } from 'node:child_process'
@@ -29,15 +30,20 @@ function fail(msg) {
 
 function parseArgs(argv) {
   const opt = { base: 'main', head: null, out: null, cwd: process.cwd(), max: 120000 }
+  const val = (name, i) => {
+    if (i + 1 >= argv.length) fail(`${name} 需要一个参数值`)
+    return argv[i + 1]
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--base') opt.base = argv[++i]
-    else if (a === '--head') opt.head = argv[++i]
-    else if (a === '--out') opt.out = argv[++i]
-    else if (a === '--cwd') opt.cwd = argv[++i]
+    if (a === '--base') { opt.base = val(a, i); i++ }
+    else if (a === '--head') { opt.head = val(a, i); i++ }
+    else if (a === '--out') { opt.out = val(a, i); i++ }
+    else if (a === '--cwd') { opt.cwd = val(a, i); i++ }
     else if (a === '--max') {
-      const n = Number(argv[++i])
-      if (!Number.isFinite(n) || n <= 0) fail(`--max 需正整数，收到: ${argv[i]}`)
+      const raw = val(a, i); i++
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n <= 0) fail(`--max 需正整数，收到: ${raw}`)
       opt.max = n
     } else fail(`未知参数: ${a}`)
   }
@@ -68,16 +74,17 @@ function main() {
   const opt = parseArgs(process.argv.slice(2))
   const read = (p) => (existsSync(path.join(opt.cwd, p)) ? readFileSync(path.join(opt.cwd, p), 'utf8') : '（本仓无此文件）')
 
-  // 统一区间：有 --head 用三点 base...head（diff 与 stat 同区间，避免 stat 混入 base 侧提交）；缺省用 base..工作区
-  const range = opt.head ? [`${opt.base}...${opt.head}`] : [opt.base]
+  // 区间模式（有 --head）：三点 base...head，diff 与 stat 同区间；工作区模式：base..工作区
+  const rangeMode = !!opt.head
+  const range = rangeMode ? [`${opt.base}...${opt.head}`] : [opt.base]
   let diff = git(['diff', ...range], opt.cwd)
-  // 未跟踪新文件不在 git diff 内 —— 显式检出，避免「PR 前新文件未 add」被静默漏审
-  const untracked = (git(['ls-files', '--others', '--exclude-standard'], opt.cwd) || '').split('\n').filter(Boolean)
+  // untracked 仅与工作区模式相关：区间模式审已提交内容，工作区未跟踪文件不在该区间，不检测不警告
+  const untracked = rangeMode ? [] : (git(['ls-files', '--others', '--exclude-standard'], opt.cwd) || '').split('\n').filter(Boolean)
 
   if (!diff || diff.trim() === '') {
     if (untracked.length > 0) {
       console.error(`[fresh] 已跟踪文件无 diff，但有 ${untracked.length} 个未跟踪新文件不在 diff 内：${untracked.slice(0, 8).join(', ')}${untracked.length > 8 ? ' …' : ''}`)
-      console.error('[fresh] 请先 git add（或 git add -N）再复审，否则新文件会被漏审')
+      console.error('[fresh] 工作区模式下 git diff 不含 untracked——请先 git add（或 git add -N）再复审，否则新文件会被漏审')
     } else {
       console.error(`[fresh] diff 为空——没有可复审内容${lastGitErr ? `（git: ${lastGitErr}）` : ''}`)
     }

@@ -28,13 +28,17 @@ function fail(msg) {
 
 function parseArgs(argv) {
   const opt = { actual: null, expected: null, note: '', out: null, cwd: process.cwd() }
+  const val = (name, i) => {
+    if (i + 1 >= argv.length) fail(`${name} 需要一个参数值`)
+    return argv[i + 1]
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--actual') opt.actual = argv[++i]
-    else if (a === '--expected') opt.expected = argv[++i]
-    else if (a === '--note') opt.note = argv[++i]
-    else if (a === '--out') opt.out = argv[++i]
-    else if (a === '--cwd') opt.cwd = argv[++i]
+    if (a === '--actual') { opt.actual = val(a, i); i++ }
+    else if (a === '--expected') { opt.expected = val(a, i); i++ }
+    else if (a === '--note') { opt.note = val(a, i); i++ }
+    else if (a === '--out') { opt.out = val(a, i); i++ }
+    else if (a === '--cwd') { opt.cwd = val(a, i); i++ }
     else fail(`未知参数: ${a}`)
   }
   return opt

@@ -12,19 +12,19 @@
 //   --out <file>       证据文件路径（相对路径按 --cwd 解析；默认 <cwd>/verify-evidence.md）
 //   --cwd <dir>        目标仓根（默认当前目录）
 //   --label <name>     证据标题（默认 "verify run"）
-//   --timeout <ms>     单命令超时（默认 600000）
+//   --timeout <ms>     单命令超时（正整数毫秒，默认 600000）
 //   --cmd <command>    显式命令（可重复多次）
-//   --require-clean    要求 git 工作区干净（证据文件自身不计）；脏则整体判失败 exit 1
+//   --require-clean    要求 git 工作区干净（证据文件自身不计）；脏或 git 状态不可用均判失败 exit 1
 // 环境变量：
 //   VERIFY_CMDS        覆盖自动发现（按 ;/, 拆分多条；命令本身含分隔符时改用 --cmd）
-// 退出码：0 全部通过（且 --require-clean 时工作区干净）；1 任一失败/脏树；2 使用错误
+// 退出码：0 全部通过（且 --require-clean 时工作区可证干净）；1 任一失败/脏树/无法证干净；2 使用错误
 // 零依赖：node >=18（spawnSync / readFileSync）
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 
-const TOOL = 'm1-verify-run/1.1'
+const TOOL = 'm1-verify-run/1.2'
 const DISCOVER_ORDER = ['lint', 'typecheck', 'test', 'build']
 const OUTPUT_CAP = 20000 // 单命令输出入证上限（超出保头尾，文件仍标注截断）
 
@@ -36,16 +36,21 @@ function fail(msg) {
 function parseArgs(argv) {
   const opt = { cwd: process.cwd(), out: null, label: 'verify run', timeout: 600000, cmds: [], requireClean: false }
   const rest = []
+  const val = (name, i) => {
+    if (i + 1 >= argv.length) fail(`${name} 需要一个参数值`)
+    return argv[i + 1]
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--out') opt.out = argv[++i]
-    else if (a === '--cwd') opt.cwd = argv[++i]
-    else if (a === '--label') opt.label = argv[++i]
+    if (a === '--out') { opt.out = val(a, i); i++ }
+    else if (a === '--cwd') { opt.cwd = val(a, i); i++ }
+    else if (a === '--label') { opt.label = val(a, i); i++ }
     else if (a === '--timeout') {
-      const n = Number(argv[++i])
-      if (!Number.isFinite(n) || n <= 0) fail(`--timeout 需正数毫秒，收到: ${argv[i]}`)
+      const raw = val(a, i); i++
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n <= 0) fail(`--timeout 需正整数毫秒，收到: ${raw}`)
       opt.timeout = n
-    } else if (a === '--cmd') opt.cmds.push(argv[++i])
+    } else if (a === '--cmd') { opt.cmds.push(val(a, i)); i++ }
     else if (a === '--require-clean') opt.requireClean = true
     else if (a === '--') { opt.cmds.push(...argv.slice(i + 1).filter(Boolean)); break }
     else rest.push(a)
@@ -77,12 +82,17 @@ function gitInfo(cwd, excludeAbs) {
   const porcelain = run(['status', '--porcelain'])
   let dirtyFiles = []
   if (porcelain !== null) {
-    dirtyFiles = porcelain.split('\n').filter(Boolean).map((l) => l.slice(3).trim())
-    // 证据文件自身不计入脏（否则第二次起恒脏，「证据含混」沦为噪声）
+    dirtyFiles = porcelain.split('\n').filter(Boolean).map((l) => {
+      let p = l.slice(3).trim()
+      const arrow = p.indexOf(' -> ') // rename 行 "old -> new"，取新路径
+      if (arrow >= 0) p = p.slice(arrow + 4).trim()
+      if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1) // git 对特殊字符加引号
+      return p.replace(/\\/g, '/')
+    })
+    // 仅精确排除证据文件自身（相对 cwd 的精确路径），不按 basename 模糊匹配（避免误排子目录同名文件）
     if (excludeAbs) {
       const rel = path.relative(cwd, excludeAbs).replace(/\\/g, '/')
-      const base = path.basename(excludeAbs)
-      dirtyFiles = dirtyFiles.filter((f) => f !== rel && f !== base && !f.endsWith('/' + base))
+      dirtyFiles = dirtyFiles.filter((f) => f !== rel)
     }
   }
   return {
@@ -101,7 +111,6 @@ function capOutput(s) {
 }
 
 function fence(text) {
-  // 输出里若含 ``` 用 ~~~~ 围栏兜底
   return text.includes('```') ? { open: '~~~~text', close: '~~~~' } : { open: '```text', close: '```' }
 }
 
@@ -117,20 +126,22 @@ function main() {
     const t0 = Date.now()
     const r = spawnSync(cmd, { cwd: opt.cwd, encoding: 'utf8', shell: true, timeout: opt.timeout, maxBuffer: 32 * 1024 * 1024, env: process.env })
     const durationMs = Date.now() - t0
-    // 区分三种非正常退出：超时(ETIMEDOUT/signal)、spawn 失败或输出溢出(r.error)、命令自身非零退出
+    // 三类非正常退出严格区分：超时(ETIMEDOUT)、spawn 失败/输出溢出(r.error 非超时)、信号死亡(SIGKILL/SIGSEGV…)
     const spawnErr = r.error ? (r.error.code === 'ETIMEDOUT' ? 'timeout' : `spawn-error: ${r.error.message}`) : null
-    const timedOut = spawnErr === 'timeout' || (r.status === null && !!r.signal)
+    const timedOut = spawnErr === 'timeout'
+    const signaled = !timedOut && r.status === null && !!r.signal
     const hasOutput = (r.stdout && r.stdout.trim()) || (r.stderr && r.stderr.trim())
     const combined = hasOutput ? `--- stdout ---\n${r.stdout ?? ''}\n--- stderr ---\n${r.stderr ?? ''}`.trim() : '(无输出)'
-    const failed = r.status !== 0 || !!spawnErr
-    results.push({ cmd, code: r.status, timedOut, spawnErr, signal: r.signal, durationMs, failed, output: capOutput(combined) })
-    const tag = spawnErr && spawnErr !== 'timeout' ? '⚠' : (failed ? '✗' : '✓')
-    console.log(`[verify] ${tag} ${cmd} → exit=${r.status ?? 'N/A'}${timedOut ? ' TIMEOUT' : ''}${spawnErr && spawnErr !== 'timeout' ? ` (${spawnErr})` : ''} (${(durationMs / 1000).toFixed(1)}s)`)
+    const failed = r.status !== 0 || !!spawnErr || signaled
+    results.push({ cmd, code: r.status, timedOut, signaled, spawnErr, signal: r.signal, durationMs, failed, output: capOutput(combined) })
+    const tag = timedOut ? '⏱' : (spawnErr && spawnErr !== 'timeout' ? '⚠' : (signaled ? '💀' : (failed ? '✗' : '✓')))
+    console.log(`[verify] ${tag} ${cmd} → exit=${r.status ?? 'N/A'}${timedOut ? ' TIMEOUT' : ''}${signaled ? ` signal=${r.signal}` : ''}${spawnErr && spawnErr !== 'timeout' ? ` (${spawnErr})` : ''} (${(durationMs / 1000).toFixed(1)}s)`)
   }
 
   const cmdFail = results.filter((r) => r.failed).length
-  const dirtyFail = opt.requireClean && gi.dirty !== 0 && gi.dirty !== null
-  const allPass = cmdFail === 0 && !dirtyFail
+  // --require-clean：dirty!==0 即失败；dirty===null（git 不可用/非 git 目录）无法证明干净，同样判失败（不静默放行）
+  const cleanFail = opt.requireClean && gi.dirty !== 0
+  const allPass = cmdFail === 0 && !cleanFail
   const lines = []
   lines.push(`# ${opt.label} · 证据文件`)
   lines.push('')
@@ -153,20 +164,20 @@ function main() {
   lines.push('| # | 命令 | 退出码 | 耗时 |')
   lines.push('|---|---|---|---|')
   results.forEach((r, i) => {
-    const mark = r.spawnErr && r.spawnErr !== 'timeout' ? `⚠ ${r.spawnErr}` : (r.timedOut ? '⏱ TIMEOUT' : (r.failed ? `❌ ${r.code}` : `✅ ${r.code}`))
+    const mark = r.timedOut ? '⏱ TIMEOUT' : (r.spawnErr && r.spawnErr !== 'timeout' ? `⚠ ${r.spawnErr}` : (r.signaled ? `💀 signal ${r.signal}` : (r.failed ? `❌ ${r.code}` : `✅ ${r.code}`)))
     lines.push(`| ${i + 1} | \`${r.cmd}\` | ${mark} | ${(r.durationMs / 1000).toFixed(1)}s |`)
   })
   lines.push('')
   let verdict = `**结论：${results.length} 项全部通过（exit 0）。**`
   if (cmdFail > 0) verdict = `**结论：${cmdFail}/${results.length} 项失败。**`
-  if (dirtyFail) verdict += ` **工作区不干净（${gi.dirty} 项），--require-clean 判失败。**`
+  if (cleanFail) verdict += gi.dirty === null ? ' **无法确认工作区干净（git 状态不可用），--require-clean 判失败。**' : ` **工作区不干净（${gi.dirty} 项），--require-clean 判失败。**`
   lines.push(verdict)
   lines.push('')
   for (const r of results) {
     const f = fence(r.output.text)
     lines.push(`## ${r.failed ? '✗' : '✓'} \`${r.cmd}\``)
     lines.push('')
-    lines.push(`exit=${r.code ?? 'N/A'}${r.signal ? ` signal=${r.signal}` : ''}${r.spawnErr ? ` ${r.spawnErr}` : ''} · ${(r.durationMs / 1000).toFixed(1)}s${r.output.truncated ? ' · 输出已截断' : ''}`)
+    lines.push(`exit=${r.code ?? 'N/A'}${r.signal ? ` signal=${r.signal}` : ''}${r.spawnErr ? ` ${r.spawnErr}` : ''}${r.timedOut ? ' TIMEOUT' : ''} · ${(r.durationMs / 1000).toFixed(1)}s${r.output.truncated ? ' · 输出已截断' : ''}`)
     lines.push('')
     lines.push(f.open)
     lines.push(r.output.text)
