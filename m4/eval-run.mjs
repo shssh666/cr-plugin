@@ -38,6 +38,7 @@ if (PASSIVE && !process.env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = 'mo
 if (N_VOTES > 0) process.env.CR_VOTES = String(Math.floor(N_VOTES))
 
 const { REVIEWER_VERSION, buildPrompt, collectBallots, tallyGroups } = await import('../reviewer/review.mjs')
+const { config } = await import('../reviewer/config.mjs')
 
 if (!MOCK && !process.env.DEEPSEEK_API_KEY) {
   console.error('[eval] 缺 DEEPSEEK_API_KEY（或用 --mock 自检链路）')
@@ -111,8 +112,14 @@ const jsonlLines = []
 const ts = new Date().toISOString()
 
 for (const s of sets) {
-  const diff = readFileSync(path.join(evalRoot, s.diff), 'utf8')
-  console.log(`\n== set ${s.id}（${s.cases.length} 例，diff ${diff.length} 字符）==`)
+  let diff = readFileSync(path.join(evalRoot, s.diff), 'utf8')
+  // 保真：与生产 reviewPR 同规则截断（config.maxDiffChars），重放才等于生产视角
+  let truncated = false
+  if (diff.length > config.maxDiffChars) {
+    diff = diff.slice(0, config.maxDiffChars) + '\n\n... [diff 过长已截断]'
+    truncated = true
+  }
+  console.log(`\n== set ${s.id}（${s.cases.length} 例，diff ${diff.length} 字符${truncated ? '，已按生产规则截断' : ''}）==`)
   const prompt = buildPrompt({
     pr: { number: 0, title: `eval replay ${s.id}`, body: s.context },
     diff,
@@ -120,7 +127,7 @@ for (const s of sets) {
     isFirst: true,
     st: { fingerprints: [] },
     ctxFiles: ctxFor(s.repo),
-    truncated: false,
+    truncated,
   })
 
   let groups
