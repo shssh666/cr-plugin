@@ -61,6 +61,7 @@ v2 已改：fingerprint = path|category（2026-11-04，与 C2a 投票过滤一�
 - 云防火墙才是真闸，主机 iptables 无效（且重启即丢）
 - 国内服务器 → github.com git https 间歇不通：fetch 写重试循环用 `if git fetch; then` 判定（**别管道到 tail**，管道吃退出码）；api.github.com / codeload.github.com 通常稳定，可做备用通道（tarball / Git Data API）
 - 小内存机（<2G）：应用容器启动时 npm ci + build 是常态，验证要等构建完成再打 API
+- **`docker cp` 到容器内已存在的目录会嵌套而非覆盖**（2026-11-04 实证：eval 重放三次都跑了第一次的旧代码+旧快照，diff 字符数雷同暴露）→ 容器侧复用路径必须先 `docker exec … rm -rf <目标>`；**对照实验必须跑前断言版本指纹**（REVIEWER_VERSION 不符即中止），版本打印纪律是环境污染的最后防线
 
 ## 7. 审查者视角（REVIEW.md 模板要点）
 

@@ -28,6 +28,9 @@ const SYSTEM_PROMPT = `你是资深代码审查者。只报高置信度问题；
 4. "缺少的代码"类问题（如某 signal 无触发者）要全文件 grep 确认后再报`
 
 // v2：引擎行为标识入哈希——投票过滤任何改动都可经 REVIEWER_VERSION 回溯（M4 跑分键）
+// 教训（2026-11-04 A/B 实证，实验 d73447c1fbcc 已回退）：全局 prompt 反例必须是无语境的普适真理；
+// 语境条件豁免（如 dev-CLI 执行自设命令）放仓级 REVIEW.md「语境豁免」段（随 ctxFiles 注入）——
+// 反例 5/6 曾使工具类 diff 召回 46%→8%（模型泛化为「CLI diff 不用报」）
 const ENGINE = 'v2-vote'
 
 /** reviewer_version：engine+prompt+分类+模型 的哈希，任何改动都可回溯（M4 跑分用） */
