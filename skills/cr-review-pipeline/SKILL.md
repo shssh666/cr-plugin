@@ -26,7 +26,7 @@ description: >
 
 ```
 main 新建分支（squash 合并后旧分支禁止续用）
-  → 开发 + 本地验证（lint/typecheck/test/build，输出贴进 PR；verify-run 证据 = Testing 唯一合法来源）
+  → 开发 + 本地验证（verify-run 产证据文件 = Testing 段唯一合法来源；裸控制台输出不作数）
   → 提 PR → 三眼审查
       M2 投票引擎：R1 全量建指纹 / R2+ 增量（高危文件扩大；新 I/O 边界触发安全清单；lockfile 变更自动 npm ci）
       DSH-action：异步竞态/跨文件一致性强项
@@ -43,7 +43,7 @@ main 新建分支（squash 合并后旧分支禁止续用）
   ① CI 必需检查全绿 ② 历轮 findings 全部有处置记录 ③ 末提交最小（逐条对应 findings）
   裁决理由**写进合并 commit message** 留档
 - **三眼分工**（2026-11-04 实证升级）：M2 投票引擎强资源/清理/测试缺口/约定合规、压不一致噪声；DSH-action 强异步竞态/跨文件一致性（有硬超时，大 diff 必超时）；**fresh-eyes 强微妙语义 bug**（M2 对二阶语义 bug 实测票池=0，fresh-eyes 同批 6/6 全中）。**双引擎同报 = 免复核高优**；引擎与人工裁决冲突且引擎高票复现 → 列裁决复核候选（eval 反向挑战）
-- **findings 三去向闭环**（同类 ≥3 次必沉淀）：每条审出的问题 ①修代码（PR）②反哺规则——CLAUDE.md/REVIEW.md 契约、SYSTEM_PROMPT 反例、skill 条目、lint 规则 ③入 eval 种子（cases.json，注意快照取 bug 存在时点）。只修代码不复盘 = 同类问题必然重演（实例：cr-plugin CLAUDE.md 六契约即 23 条 findings 的沉淀）
+- **findings 三去向闭环**（同类 ≥3 次必沉淀）：每条审出的问题 ①修代码（PR）②反哺规则——CLAUDE.md/REVIEW.md 契约、SYSTEM_PROMPT 反例、skill 条目、lint 规则 ③入 eval 种子（cases.json，注意快照取 bug 存在时点）。只修代码不复盘 = 同类问题必然重演（实例：cr-plugin CLAUDE.md 六契约即历史 findings——fresh-eyes 23 条 + M2 dropped + M4 跑分——的沉淀）
 
 ## 合并操作要点
 

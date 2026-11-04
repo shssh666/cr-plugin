@@ -1,7 +1,7 @@
 # CLAUDE.md — cr-plugin 工具仓约定
 
 > 本仓是代码审查流水线插件：审查引擎（reviewer/）、验证工具箱（m1/）、eval 跑分（m4/+eval/）、流程 skill（skills/）、服务器菜谱（recipes/）。
-> **本文件的每条约定都源自真实审查 findings（2026-11-04：fresh-eyes 23 条 + M2 dropped 复盘 + M4 跑分），同类 ≥3 次即沉淀为此**——改约定请附来源编号。
+> **本文件的每条约定都源自真实审查 findings（2026-11-04：fresh-eyes 23 条 + M2 dropped 复盘 + M4 跑分；同类 ≥3 次必须沉淀，所列来源为代表性例证而非穷举）**——改约定请附来源编号。
 
 ## 这是什么
 
